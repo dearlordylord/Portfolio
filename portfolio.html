@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Irina Ivashchenko — UX/UI Designer</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #edeef6;
+  --glass: rgba(255,255,255,0.88);
+  --gb: rgba(120,100,180,0.14);
+  --text: #1a1830;
+  --muted: rgba(26,24,48,0.45);
+  --v: #eb0065; --p: #984eff; --b: #9333ea;
+  --r: 20px;
+}
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; overflow-x: hidden; }
+
+/* blobs */
+.blob { position: fixed; border-radius: 50%; filter: blur(140px); opacity: 0.07; pointer-events: none; z-index: 0; }
+.b1 { width: 700px; height: 700px; background: #984eff; top: -250px; left: -200px; }
+.b2 { width: 500px; height: 500px; background: #9333ea; top: 40vh; right: -200px; }
+.b3 { width: 400px; height: 400px; background: #eb0065; bottom: 10vh; left: 20%; }
+
+/* NAV */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.25rem 4rem;
+  background: rgba(237,238,246,0.9); backdrop-filter: blur(24px);
+  box-shadow: 0 1px 0 rgba(120,100,180,0.12);
+  border-bottom: 1px solid var(--gb);
+}
+.nav-logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1rem; background: linear-gradient(135deg, var(--v), var(--p)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.nav-links { display: flex; gap: 2.5rem; list-style: none; }
+.nav-links a { color: var(--muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: color 0.2s; }
+.nav-links a:hover { color: var(--text); }
+.nav-cta { padding: 0.5rem 1.25rem; background: linear-gradient(135deg, #eb0065, #984eff); border: none; border-radius: 100px; color: #fff !important; }
+.nav-cta:hover { opacity: 0.88; transform: translateY(-1px); }
+
+/* particle canvas — fixed, full viewport, behind everything */
+#pcanvas {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  z-index: 0; pointer-events: none;
+}
+
+.btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.8rem 1.8rem; border-radius: 100px; font-size: 0.9rem; font-weight: 500; text-decoration: none; transition: all 0.25s; cursor: pointer; border: none; }
+.btn-primary { background: linear-gradient(135deg, #eb0065, #984eff); color: #fff; box-shadow: 0 4px 28px rgba(152,78,255,0.25); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 40px rgba(152,78,255,0.4); }
+.btn-ghost { background: #fff; border: 1.5px solid var(--gb); color: var(--text); }
+.btn-ghost:hover { border-color: var(--v); color: var(--v); transform: translateY(-2px); }
+
+/* ── SHARED SECTION ── */
+section { position: relative; z-index: 1; }
+.sw { max-width: 1100px; margin: 0 auto; padding: 6rem 4rem; }
+#about { margin-top: -18vh; position: relative; z-index: 2; background: #f5f5fa; border-radius: 24px 24px 0 0; box-shadow: 0 -20px 60px rgba(120,100,180,0.08); }
+#about .sw { padding-top: 3rem; }
+.stag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--v); margin-bottom: 0.75rem; }
+.stitle { font-family: 'Syne', sans-serif; font-size: clamp(1.9rem, 4vw, 2.8rem); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 1.5rem; }
+.stitle em { font-style: normal; color: var(--v); }
+
+/* ABOUT */
+#about .sw { display: grid; grid-template-columns: 1fr 1fr; gap: 5rem; align-items: center; }
+.atext { color: rgba(28,11,46,0.62); line-height: 1.9; margin-bottom: 1.2rem; }
+.tcard { background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: none; border-radius: var(--r); padding: 2.2rem; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 4px 32px rgba(120,100,180,0.1); }
+.tcard h3 { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); margin-bottom: 1.5rem; }
+.tl { display: flex; gap: 1rem; margin-bottom: 1.2rem; }
+.tldot { width: 8px; height: 8px; border-radius: 50%; background: var(--v); flex-shrink: 0; margin-top: 8px; box-shadow: 0 0 10px var(--v); }
+.tldot.p { background: var(--p); box-shadow: 0 0 10px var(--p); }
+.tldot.b { background: var(--b); box-shadow: 0 0 10px var(--b); }
+.tlyear { font-size: 0.72rem; color: var(--muted); }
+.tltext { font-size: 0.9rem; font-weight: 500; }
+/* language chips */
+.lang-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.lang-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.35rem 0.35rem 0.85rem; background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: 100px; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 4px 16px rgba(120,100,180,0.1); }
+.lc-name { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+.lc-lvl { font-size: 0.68rem; font-weight: 700; color: var(--p); background: rgba(152,78,255,0.1); padding: 0.1rem 0.4rem; border-radius: 100px; }
+/* skill dots */
+.skill-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; }
+.skill-row:last-child { margin-bottom: 0; }
+.skill-label { font-size: 0.875rem; font-weight: 500; color: var(--text); }
+.skill-dots { display: flex; gap: 5px; }
+.sdot { width: 9px; height: 9px; border-radius: 50%; background: rgba(120,100,180,0.14); }
+.sdot.on { background: linear-gradient(135deg, #eb0065, #984eff); box-shadow: 0 0 5px rgba(152,78,255,0.35); }
+/* right column stack */
+.about-right { display: flex; flex-direction: column; gap: 1rem; }
+
+/* CASE CARDS */
+.case-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 1.5rem; margin-bottom: 2.5rem; }
+.case-card { border-radius: var(--r); overflow: hidden; cursor: pointer; background: linear-gradient(135deg, rgba(255,255,255,0.42), rgba(255,255,255,0.2)); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 4px 24px rgba(120,100,180,0.1); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+.case-card:hover { transform: translateY(-6px); box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 14px 44px rgba(120,100,180,0.2); }
+.case-cover-img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; pointer-events: none; }
+.case-info { padding: 1.15rem 1.4rem 1.5rem; }
+.case-tag-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.case-tag { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--p); background: rgba(152,78,255,0.1); padding: 0.18rem 0.55rem; border-radius: 100px; }
+.case-name { font-family: 'Syne', sans-serif; font-size: 1.2rem; font-weight: 800; color: var(--text); margin-bottom: 0.3rem; }
+.case-desc { font-size: 0.82rem; color: var(--muted); line-height: 1.6; margin-bottom: 0.75rem; }
+.case-open { font-size: 0.8rem; font-weight: 700; color: var(--p); display: inline-flex; align-items: center; gap: 0.3rem; }
+.case-open svg { transition: transform 0.2s; }
+.case-card:hover .case-open svg { transform: translateX(4px); }
+
+/* CASE OVERLAY */
+#case-overlay { display: none; position: fixed; inset: 0; background: rgba(8,8,10,0.93); z-index: 900; overflow-y: auto; cursor: pointer; }
+#case-overlay.open { display: block; }
+#case-overlay-inner { max-width: 960px; margin: 0 auto; padding: 5rem 0 6rem; cursor: default; }
+#case-close { position: fixed; top: 1.2rem; right: 1.4rem; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.18); color: #fff; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; z-index: 901; line-height: 1; }
+#case-close:hover { background: rgba(255,255,255,0.22); }
+#case-overlay-header { padding: 0 1.5rem 2rem; color: #fff; }
+#case-overlay-header h2 { font-family: 'Syne', sans-serif; font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 900; margin-bottom: 0.35rem; }
+#case-overlay-header p { font-size: 1rem; color: rgba(255,255,255,0.5); margin-bottom: 1rem; }
+#case-overlay-tags { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+#case-overlay-tags span { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; padding: 0.22rem 0.65rem; border-radius: 100px; background: rgba(152,78,255,0.2); color: #c39eff; border: 1px solid rgba(152,78,255,0.3); }
+#case-images { line-height: 0; font-size: 0; border-radius: 20px; overflow: hidden; }
+#case-images img { display: block; width: 100%; }
+@media(max-width:1100px) { .case-grid { grid-template-columns: repeat(2,1fr); } }
+@media(max-width:600px)  { .case-grid { grid-template-columns: 1fr; } }
+@media(max-width:900px)  { #case-overlay-inner { padding: 5rem 0 4rem; } }
+
+/* PROJECTS */
+.pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+.pcard { background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: none; border-radius: var(--r); padding: 2rem; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 2px 20px rgba(120,100,180,0.08); transition: all 0.3s; position: relative; overflow: hidden; }
+.pcard::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); opacity: 0; transition: opacity 0.3s; }
+.pcard:hover { transform: translateY(-6px); background: linear-gradient(135deg, rgba(255,255,255,0.55), rgba(255,255,255,0.32)); box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 10px 44px rgba(120,100,180,0.12); }
+.pcard:hover::before { opacity: 1; }
+.pcard.feat { grid-column: span 2; }
+.ptag { display: inline-block; padding: 0.2rem 0.7rem; border-radius: 100px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.9rem; }
+.tv { background: rgba(235,0,101,0.08); color: var(--v); border: 1px solid rgba(235,0,101,0.2); }
+.tp { background: rgba(236,72,153,0.08); color: var(--p); border: 1px solid rgba(236,72,153,0.2); }
+.tb { background: rgba(139,92,246,0.08); color: var(--b); border: 1px solid rgba(139,92,246,0.2); }
+.tg { background: rgba(22,163,74,0.08); color: #16a34a; border: 1px solid rgba(22,163,74,0.2); }
+.pname { font-family: 'Syne', sans-serif; font-size: 1.3rem; font-weight: 700; margin-bottom: 0.5rem; }
+.pdesc { font-size: 0.875rem; color: var(--muted); line-height: 1.7; margin-bottom: 1rem; }
+.pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pill { font-size: 0.72rem; padding: 0.2rem 0.6rem; background: rgba(120,100,180,0.07); border: 1px solid rgba(120,100,180,0.14); border-radius: 100px; color: var(--muted); }
+
+/* SKILLS */
+#skills .sw { text-align: center; }
+#skillcanvas { width: 100%; height: 480px; display: block; margin-top: 2.5rem; cursor: default; }
+
+/* CONTACT */
+#contact .sw { text-align: center; max-width: 680px; }
+.ccard { background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: none; border-radius: 28px; padding: 3.5rem; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 8px 48px rgba(120,100,180,0.1); position: relative; overflow: hidden; }
+.ccard::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04)); }
+.ccard > * { position: relative; }
+.ctitle { font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 0.8rem; line-height: 1.2; }
+.csub { color: var(--muted); margin-bottom: 2rem; }
+.clinks { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.cl { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 1.4rem; background: rgba(120,100,180,0.06); border: 1px solid var(--gb); border-radius: 100px; color: var(--text); text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: all 0.25s; }
+.cl:hover { background: rgba(235,0,101,0.06); border-color: rgba(235,0,101,0.35); color: var(--v); transform: translateY(-2px); }
+
+.divider { height: 1px; background: var(--gb); max-width: 1100px; margin: 0 auto; position: relative; z-index: 1; }
+footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb); color: var(--muted); font-size: 0.78rem; position: relative; z-index: 1; }
+
+/* ── SCROLLY IMAGE SEQUENCE ── */
+#scrolly { position: relative; height: 700vh; }
+#scrolly-sticky { position: sticky; top: 0; height: 100vh; width: 100%; overflow: hidden; background: var(--bg); }
+#scrolly-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* loader */
+#scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
+#scrolly-loader.hidden { opacity: 0; pointer-events: none; }
+.loader-label { font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); }
+.loader-bar-bg { width: 180px; height: 2px; background: rgba(120,100,180,0.15); border-radius: 2px; margin-top: 1.2rem; overflow: hidden; }
+.loader-bar-fill { height: 100%; background: linear-gradient(90deg, #eb0065, #984eff); width: 0%; transition: width 0.12s; border-radius: 2px; }
+/* text overlays */
+.st { position: absolute; z-index: 10; pointer-events: none; opacity: 0; will-change: opacity; }
+/* st1: left side — UX/UI + skills */
+#st1 { left: 6%; top: 50%; transform: translateY(-50%); max-width: 400px; }
+/* st2: RIGHT side — "15 years" (she'll look at it) */
+#st2 { right: 6%; top: 50%; transform: translateY(-50%); text-align: right; max-width: 420px; }
+/* explore CTA — sits ON the white strip line, centered */
+#explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 22; opacity: 0; pointer-events: none; white-space: nowrap; top: 100%; }
+/* second noise layer — on top of everything for texture */
+#noise-top { position: absolute; inset: 0; z-index: 21; background: url('Кадры/ШУМ.png') center/cover; mix-blend-mode: multiply; opacity: 0.42; pointer-events: none; }
+/* st1 left — UX/UI */
+.role-accent { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.02em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.role-sub    { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 800; line-height: 1; color: var(--p); letter-spacing: -0.02em; }
+.st-skills-list { font-size: clamp(0.72rem, 1vw, 0.88rem); color: var(--muted); line-height: 2; letter-spacing: 0.04em; margin-top: 1.4rem; }
+.st-skills-list span { display: block; }
+/* st2 right — years */
+.years-num  { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.03em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.years-word { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 700; color: var(--p); line-height: 1; margin-bottom: 0.5rem; }
+.st-line-sm { font-family: 'Syne', sans-serif; font-size: clamp(1rem, 1.8vw, 1.6rem); font-weight: 600; line-height: 1.3; color: var(--text); }
+.st-line    { font-family: 'Syne', sans-serif; font-size: clamp(1.5rem, 2.8vw, 2.6rem); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; color: var(--text); }
+.st-sub     { font-size: 0.95rem; color: var(--muted); margin-top: 0.6rem; line-height: 1.6; }
+/* white strip — positioned by JS directly under photo bottom edge */
+#photo-strip { position: absolute; left: 0; right: 0; height: 4px; background: #fff; z-index: 15; pointer-events: none; top: 100%; }
+/* scroll hint */
+#scroll-hint { position: absolute; bottom: 2.5rem; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.5s; }
+#scroll-hint.gone { opacity: 0; }
+.scroll-hint-label { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.scroll-hint-arrow { width: 22px; height: 22px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); animation: arrowBounce 1.5s ease-in-out infinite; }
+@keyframes arrowBounce { 0%,100%{transform:translateY(0) rotate(45deg)}55%{transform:translateY(7px) rotate(45deg)} }
+@keyframes pulseCTA {
+  0%,100% { box-shadow: 0 4px 28px rgba(152,78,255,0.25), 0 0 0 0 rgba(194,24,91,0.0); transform: scale(1); }
+  50%     { box-shadow: 0 6px 36px rgba(152,78,255,0.40), 0 0 0 10px rgba(194,24,91,0.12); transform: scale(1.04); }
+}
+#explore-cta .btn-primary { animation: pulseCTA 2.2s ease-in-out infinite; }
+/* top progress bar */
+#scrolly-progress { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, #eb0065, #984eff); width: 0%; z-index: 200; pointer-events: none; }
+
+@media (max-width: 900px) {
+  nav { padding: 1rem 1.5rem; } .nav-links { display: none; }
+  #about .sw { grid-template-columns: 1fr; gap: 2.5rem; }
+  .sw { padding: 5rem 1.5rem; }
+  .pcard.feat { grid-column: span 1; }
+  .ccard { padding: 2rem; }
+  #st1 { left: 4%; max-width: 55%; }
+  #st2 { right: 4%; max-width: 55%; }
+}
+</style>
+</head>
+<body>
+
+<div class="blob b1"></div>
+<div class="blob b2"></div>
+<div class="blob b3"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">Irina Ivashchenko</div>
+  <ul class="nav-links">
+    <li><a href="#about">About</a></li>
+    <li><a href="#projects">Work</a></li>
+    <li><a href="#skills">Skills</a></li>
+    <li><a href="#contact" class="nav-cta">Contact</a></li>
+  </ul>
+</nav>
+
+<!-- SCROLLY IMAGE SEQUENCE INTRO -->
+<div id="scrolly-progress"></div>
+<canvas id="pcanvas"></canvas>
+
+<section id="scrolly">
+  <div id="scrolly-sticky">
+
+    <!-- loading -->
+    <div id="scrolly-loader">
+      <span class="loader-label">Loading</span>
+      <div class="loader-bar-bg"><div class="loader-bar-fill" id="loader-fill"></div></div>
+    </div>
+
+    <!-- image sequence canvas -->
+    <canvas id="scrolly-canvas"></canvas>
+    <!-- white strip exactly under photo bottom edge, positioned by JS -->
+    <div id="photo-strip"></div>
+
+    <!-- overlay 1: left — UX/UI + skills (frames 0-32) -->
+    <div class="st" id="st1">
+      <span class="role-accent">UX/UI</span>
+      <span class="role-sub">Designer</span>
+      <div class="st-skills-list">
+        <span>Figma · Design Systems</span>
+        <span>UX Research · User Flows</span>
+        <span>Prototyping · Wireframing</span>
+      </div>
+    </div>
+
+    <!-- overlay 2: RIGHT — years (frames 33-65, she looks at it) -->
+    <div class="st" id="st2">
+      <span class="years-num">14+</span>
+      <span class="years-word">years</span>
+      <div class="st-line-sm">turning ideas<br>into experiences</div>
+      <div class="st-sub">Dating · GameFi · Crypto · Brand</div>
+    </div>
+
+    <!-- second noise layer — on top of everything -->
+    <div id="noise-top"></div>
+
+    <!-- explore CTA — appears after intro, sits on white strip -->
+    <div id="explore-cta">
+      <a href="#about" class="btn btn-primary">Explore work ↓</a>
+    </div>
+
+    <!-- scroll hint -->
+    <div id="scroll-hint">
+      <span class="scroll-hint-label">Scroll</span>
+      <div class="scroll-hint-arrow"></div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section id="about">
+  <div class="sw">
+    <div>
+      <span class="stag">About me</span>
+      <h2 class="stitle">Fine arts roots,<br><em>product design</em> mind</h2>
+      <p class="atext">My design journey started not with pixels, but with paint. Two red-diploma degrees in graphic design and fine arts gave me a rare sensitivity to composition, colour, and visual storytelling.</p>
+      <p class="atext">Over 6+ years in UX/UI I've shipped dating apps, GameFi Telegram mini-apps, crypto platforms, and brand identities — always thinking in systems, not just screens.</p>
+      <div style="display:flex;flex-direction:column;gap:0.65rem;margin-top:1.4rem;align-items:flex-start">
+        <a href="https://be.net/RaDiza" target="_blank" class="btn btn-ghost" style="gap:0.6rem">
+          <svg width="20" height="20" viewBox="0 0 112.196 112.196" style="flex-shrink:0;border-radius:50%;overflow:visible"><circle cx="56.098" cy="56.098" r="56.098" fill="#4176fa"/><path d="M76.209 46.341c-16.203 0-16.224 16.142-16.224 16.225 0 0-1.11 16.162 16.224 16.162 0 0 14.456.822 14.456-11.248h-7.423s.246 4.544-6.786 4.544c0 0-7.423.494-7.423-7.341h21.879s2.406-18.342-14.703-18.342M68.95 59.028s.905-6.498 7.424-6.498c6.539 0 6.436 6.498 6.436 6.498zm-18.546-4.153s6.436-.473 6.436-8.04c0-7.546-5.264-11.248-11.947-11.248H22.91v42.256h21.981s13.428.412 13.428-12.481c.001 0 .577-10.487-7.915-10.487M32.596 43.092h12.296s2.982 0 2.982 4.4-1.748 5.038-3.743 5.038H32.596zm11.68 27.246h-11.68v-11.31h12.296s4.463-.041 4.442 5.819c0 4.936-3.31 5.45-5.058 5.491M67.12 38.075v5.203h17.438v-5.203z" fill="#f1f2f2"/></svg>
+          Portfolio on Behance
+        </a>
+        <a href="#projects" class="btn btn-primary">Cases ↓</a>
+      </div>
+    </div>
+    <div class="about-right">
+
+      <!-- Languages as chips -->
+      <div class="lang-chips">
+        <div class="lang-chip"><span class="lc-name">English</span><span class="lc-lvl">B2</span></div>
+        <div class="lang-chip"><span class="lc-name">Russian</span><span class="lc-lvl">C2</span></div>
+        <div class="lang-chip"><span class="lc-name">Ukrainian</span><span class="lc-lvl">C2</span></div>
+        <div class="lang-chip"><span class="lc-name">French</span><span class="lc-lvl">A2</span></div>
+      </div>
+
+      <!-- Journey -->
+      <div class="tcard">
+        <h3>Journey</h3>
+        <div class="tl"><div class="tldot"></div><div><div class="tltext">Bachelor's — Graphic Design</div><div class="tlyear">2012–2016 · Red diploma</div></div></div>
+        <div class="tl"><div class="tldot p"></div><div><div class="tltext">Master's — Fine Arts & Decorative Art</div><div class="tlyear">2016–2018 · Red diploma</div></div></div>
+        <div class="tl"><div class="tldot b"></div><div><div class="tltext">UX/UI — Startups & Freelance</div><div class="tlyear">2019–present · Web & Mobile</div></div></div>
+        <div class="tl"><div class="tldot"></div><div><div class="tltext">Dating · Crypto · GameFi · Brand</div><div class="tlyear">6+ products shipped from zero</div></div></div>
+      </div>
+
+      <!-- Tools -->
+      <div class="tcard">
+        <h3>Tools</h3>
+        <div class="skill-row"><span class="skill-label">Figma</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div></div></div>
+        <div class="skill-row"><span class="skill-label">Photoshop</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div></div></div>
+        <div class="skill-row"><span class="skill-label">Illustrator</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div><div class="sdot"></div></div></div>
+        <div class="skill-row"><span class="skill-label">Principle / ProtoPie</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div></div></div>
+        <div class="skill-row"><span class="skill-label">Miro</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div></div></div>
+        <div class="skill-row"><span class="skill-label">HTML / CSS</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div><div class="sdot"></div></div></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- PROJECTS -->
+<section id="projects">
+  <div class="sw">
+    <div style="text-align:center;margin-bottom:3.5rem">
+      <span class="stag">Selected work</span>
+      <h2 class="stitle">Projects that ship</h2>
+    </div>
+    <!-- CASE CARDS -->
+    <div class="case-grid">
+      <div class="case-card" onclick="openCase('fridj')">
+        <img class="case-cover-img" src="Проекты/Fridj/cover.png" alt="Fridgie cover">
+        <div class="case-info">
+          <div class="case-tag-row"><span class="case-tag">Mobile App</span><span class="case-tag">UX/UI</span></div>
+          <div class="case-name">Fridgie</div>
+          <div class="case-desc">Smart food tracker & recipe generator</div>
+          <span class="case-open">Open case <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+      </div>
+      <div class="case-card" onclick="openCase('beehive')">
+        <img class="case-cover-img" src="Проекты/пчелы/cover.png" alt="BeeHive cover">
+        <div class="case-info">
+          <div class="case-tag-row"><span class="case-tag">Mobile App</span><span class="case-tag">UX/UI</span></div>
+          <div class="case-name">BeeHive</div>
+          <div class="case-desc">Community support platform for beekeepers</div>
+          <span class="case-open">Open case <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+      </div>
+      <div class="case-card" onclick="openCase('unno')">
+        <img class="case-cover-img" src="Проекты/UNNO_eng/Cover_2.png" alt="UNNO cover">
+        <div class="case-info">
+          <div class="case-tag-row"><span class="case-tag">Branding</span><span class="case-tag">Identity</span></div>
+          <div class="case-name">UNNO</div>
+          <div class="case-desc">DNA of the clothing brand</div>
+          <span class="case-open">Open case <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+      </div>
+      <div class="case-card" onclick="openCase('restfood')">
+        <img class="case-cover-img" src="Проекты/RestFood/cover.png" alt="RestFood cover">
+        <div class="case-info">
+          <div class="case-tag-row"><span class="case-tag">Mobile App</span><span class="case-tag">UX/UI</span></div>
+          <div class="case-name">RestFood</div>
+          <div class="case-desc">Mobile app for prepared meal delivery services</div>
+          <span class="case-open">Open case <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="pgrid">
+      <div class="pcard feat">
+        <span class="ptag tv">Dating · UX/UI</span>
+        <div class="pname">3 Dating Platforms</div>
+        <div class="pdesc">Led end-to-end design on ReDate (web, 2022), TheClub (mobile app, 2023), and ProDate (web, 2024). Full cycle: UX research, wireframes, user flows, UI kits, admin panels, prototyping, and developer handoff.</div>
+        <div class="pills"><span class="pill">UX Research</span><span class="pill">Wireframes</span><span class="pill">Design System</span><span class="pill">Prototyping</span><span class="pill">Admin UI</span><span class="pill">Figma</span></div>
+      </div>
+      <div class="pcard">
+        <span class="ptag tb">GameFi · Telegram</span>
+        <div class="pname">Tap-to-Earn Mini App</div>
+        <div class="pdesc">GameFi mechanics and Telegram Mini App UX in the format of viral tap-to-earn games. Interaction design, game flow, onboarding.</div>
+        <div class="pills"><span class="pill">Game UX</span><span class="pill">Mini App</span><span class="pill">Motion</span></div>
+      </div>
+      <div class="pcard">
+        <span class="ptag tp">Crypto · EdTech</span>
+        <div class="pname">BLOCK13 Crypto Course</div>
+        <div class="pdesc">Web design for an online crypto-trading educational platform: landing page, lesson presentations, social media ads, and all supporting materials.</div>
+        <div class="pills"><span class="pill">Landing Page</span><span class="pill">Web Design</span><span class="pill">Social Ads</span></div>
+      </div>
+      <div class="pcard">
+        <span class="ptag tg">Brand · Fashion</span>
+        <div class="pname">DNA Fashion Brand</div>
+        <div class="pdesc">Full design support for a fashion label from polygraphy to web — brand identity, print, digital assets, and promotional materials.</div>
+        <div class="pills"><span class="pill">Brand Identity</span><span class="pill">Print</span><span class="pill">Digital</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- SKILLS -->
+<section id="skills">
+  <div class="sw">
+    <span class="stag">Toolkit</span>
+    <h2 class="stitle">Tools & skills</h2>
+    <canvas id="skillcanvas"></canvas>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- CONTACT -->
+<section id="contact">
+  <div class="sw">
+    <div class="ccard">
+      <div class="ctitle">Let's work<br>together</div>
+      <p class="csub">Open to full-time and freelance UX/UI roles. Remote-first.</p>
+      <div class="clinks">
+        <a href="mailto:iceiii888@gmail.com" class="cl">✉️ iceiii888@gmail.com</a>
+        <a href="https://be.net/RaDiza" target="_blank" class="cl">🎨 Behance Portfolio</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>© 2026 Irina Ivashchenko · UX/UI Designer · Crafted with care</footer>
+
+<!-- CASE OVERLAY -->
+<div id="case-overlay" onclick="closeCaseOverlay(event)">
+  <button id="case-close" onclick="closeCase()">✕</button>
+  <div id="case-overlay-inner">
+    <div id="case-overlay-header">
+      <h2 id="case-title"></h2>
+      <p id="case-subtitle"></p>
+      <div id="case-overlay-tags"></div>
+    </div>
+    <div id="case-images"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+//   SCROLLY IMAGE SEQUENCE
+// ═══════════════════════════════════════
+(function() {
+  const TOTAL    = 150;
+  // ── Frame zone boundaries ──
+  const F_INTRO_END  = 31;   // auto-play 0→31  (forced, blurry)
+  const F_FREE1_END  = 68;   // scroll 28→68   (free, mouse-reactive)
+  const F_FORCED_END = 87;   // auto-play 68→87 (forced, blurry)
+  // 87→149 : scroll-driven (free)
+  const SCROLL_SPLIT = 0.50; // scroll 0–SPLIT → frames 28–68
+
+  const canvas  = document.getElementById('scrolly-canvas');
+  const ctx     = canvas.getContext('2d');
+  const loader  = document.getElementById('scrolly-loader');
+  const fill    = document.getElementById('loader-fill');
+  const progBar = document.getElementById('scrolly-progress');
+  const hint    = document.getElementById('scroll-hint');
+  const st1 = document.getElementById('st1');
+  const st2 = document.getElementById('st2');
+  const exploreCTA = document.getElementById('explore-cta');
+
+  let images = new Array(TOTAL);
+  let loaded = 0, ready = false;
+  let targetFrame = 0, displayFrame = 0;
+  let mouseYNorm = 0.5;
+
+  // ── noise PNG overlay ──
+  const noiseImg = new Image();
+  noiseImg.src = 'Кадры/ШУМ.png';
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    draw(displayFrame);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function draw(idx) {
+    idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
+    const img = images[idx];
+    if (!img || !img.complete || !img.naturalWidth) return;
+    const cw = canvas.width, ch = canvas.height;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const s = Math.max(cw / iw, ch / ih) * 0.65;
+    const w = iw * s, h = ih * s;
+    // position white strip and explore CTA exactly at photo bottom edge
+    const photoBottom = (ch - h) / 2 + h;
+    const strip = document.getElementById('photo-strip');
+    if (strip) strip.style.top = photoBottom + 'px';
+    if (exploreCTA) exploreCTA.style.top = photoBottom + 'px';
+
+    ctx.clearRect(0, 0, cw, ch);
+    ctx.globalCompositeOperation = 'source-over';
+
+    const xOff = 0; // centered
+
+    // ── 1. NAME behind photo (shows through transparent bg of WebP) ──
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    const sz1 = Math.min(cw * 0.17, 230);
+    ctx.font = `800 ${sz1}px Syne, sans-serif`;
+    ctx.globalAlpha = 0.92;
+    ctx.fillText('IRINA', cw / 2 + xOff, ch * 0.40);
+    const sz2 = Math.min(cw * 0.093, 128);
+    ctx.font = `800 ${sz2}px Syne, sans-serif`;
+    ctx.fillText('IVASHCHENKO', cw / 2 + xOff, ch * 0.56);
+    ctx.restore();
+
+    // ── 2. Photo shifted right — clean left area for text ──
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(img, (cw - w) / 2 + xOff, (ch - h) / 2, w, h);
+
+    // ── 3. ШУМ.png noise via multiply — dark grain visible on light areas ──
+    if (noiseImg.complete && noiseImg.naturalWidth) {
+      ctx.globalAlpha = 0.88;
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(noiseImg, 0, 0, cw, ch);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function pad(n) { return String(n).padStart(3, '0'); }
+  for (let i = 0; i < TOTAL; i++) {
+    const img = new Image();
+    img.src = `Кадры/frame_${pad(i)}_delay-0.067s.webp`;
+    img.onload = () => {
+      loaded++;
+      fill.style.width = (loaded / TOTAL * 100) + '%';
+      if (!ready && loaded >= 1) draw(0);
+      if (loaded === TOTAL) {
+        ready = true;
+        setTimeout(() => loader.classList.add('hidden'), 400);
+      }
+    };
+    img.onerror = () => { loaded++; };
+    images[i] = img;
+  }
+
+  document.addEventListener('mousemove', e => {
+    mouseYNorm = Math.max(0, Math.min(1, e.clientY / window.innerHeight));
+  });
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // Frame-based opacity: fade in fIn→fPeak, hold fPeak→fFadeOut, fade out fFadeOut→fEnd
+  function frameOp(f, fIn, fPeak, fFadeOut, fEnd) {
+    if (f < fIn || f > fEnd) return 0;
+    if (f < fPeak)    return (f - fIn) / (fPeak - fIn);
+    if (f < fFadeOut) return 1;
+    return 1 - (f - fFadeOut) / (fEnd - fFadeOut);
+  }
+
+  // ── Mode machine ──
+  // 'intro'   : time-based 0→28 (auto, no scroll needed)
+  // 'free1'   : scroll 28→68 + mouse Y reactive
+  // 'forced2' : time-based 68→87 (auto, blurry frames must not stop)
+  // 'free2'   : scroll 87→149
+  let mode = 'intro';
+  let introStartTime  = null;
+  let forced2StartT   = null;
+  const INTRO_MS      = 1800; // 0→28 plays over 1.8s
+  const FORCED2_MS    = 1400; // 68→87 plays over 1.4s
+
+  function getScrollProg() {
+    const el = document.getElementById('scrolly');
+    const top = el.getBoundingClientRect().top;
+    const totalH = el.offsetHeight - window.innerHeight;
+    return Math.max(0, Math.min(1, -top / totalH));
+  }
+
+  function updateOverlays(df) {
+    // st1 UX/UI: fades in frame 0→8, full 8→55, fades out 55→72
+    st1.style.opacity = frameOp(df, 0, 8, 55, 72);
+    // st2 15+ years: fades in frame 18→28, full 28→72, fades out 72→90
+    st2.style.opacity = frameOp(df, 18, 28, 72, 90);
+    // Explore button: appears when st1 is gone (frame 70+), pulses
+    const btnOp = Math.max(0, Math.min(1, (df - 68) / 8));
+    exploreCTA.style.opacity = btnOp;
+    exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
+    // scroll hint: скрывается только когда пользователь начинает скроллить
+    // (управляется из onScroll по prog, здесь не трогаем)
+  }
+
+  function onScroll() {
+    const prog = getScrollProg();
+    progBar.style.width = (prog * 100) + '%';
+    if (prog > 0.04) hint.classList.add('gone');
+    else             hint.classList.remove('gone');
+    if (mode === 'intro' || mode === 'forced2') return; // time-based, ignore scroll
+    if (mode === 'free1') {
+      const p = Math.min(1, prog / SCROLL_SPLIT);
+      targetFrame = F_INTRO_END + p * (F_FREE1_END - F_INTRO_END);
+      if (prog >= SCROLL_SPLIT && !forced2StartT) {
+        mode = 'forced2';
+        forced2StartT = performance.now();
+      }
+    } else if (mode === 'free2') {
+      const p = Math.max(0, (prog - SCROLL_SPLIT) / (1 - SCROLL_SPLIT));
+      targetFrame = F_FORCED_END + p * (TOTAL - 1 - F_FORCED_END);
+    }
+    targetFrame = Math.max(0, Math.min(TOTAL - 1, targetFrame));
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // Mouse Y adds subtle variation in free1 zone
+  document.addEventListener('mousemove', () => {
+    if (mode !== 'free1') return;
+    const prog = getScrollProg();
+    if (prog > 0.08 && prog < SCROLL_SPLIT) {
+      const scrollF = F_INTRO_END + (prog / SCROLL_SPLIT) * (F_FREE1_END - F_INTRO_END);
+      const mouseF  = F_INTRO_END + mouseYNorm * (F_FREE1_END - F_INTRO_END);
+      targetFrame = scrollF * 0.80 + mouseF * 0.20;
+      targetFrame = Math.max(F_INTRO_END, Math.min(F_FREE1_END, targetFrame));
+    }
+  });
+
+  // ── Animation loop (rAF-based) ──
+  function animLoop(now) {
+    if (!ready) { requestAnimationFrame(animLoop); return; }
+
+    if (mode === 'intro') {
+      if (!introStartTime) introStartTime = now;
+      const t    = Math.min(1, (now - introStartTime) / INTRO_MS);
+      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+      targetFrame = ease * F_INTRO_END;
+      if (t >= 1) { mode = 'free1'; targetFrame = F_INTRO_END; }
+    } else if (mode === 'forced2') {
+      const t    = Math.min(1, (now - forced2StartT) / FORCED2_MS);
+      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+      targetFrame = F_FREE1_END + ease * (F_FORCED_END - F_FREE1_END);
+      if (t >= 1) { mode = 'free2'; targetFrame = F_FORCED_END; onScroll(); }
+    }
+
+    displayFrame = lerp(displayFrame, targetFrame, 0.07);
+    updateOverlays(displayFrame);
+    draw(displayFrame);
+    requestAnimationFrame(animLoop);
+  }
+  requestAnimationFrame(animLoop);
+  onScroll();
+})();
+
+// ═══════════════════════════════════════
+//   INTERACTIVE PARTICLE FIELD
+// ═══════════════════════════════════════
+(function() {
+  const canvas = document.getElementById('pcanvas');
+  const ctx    = canvas.getContext('2d');
+
+  let W, H, particles, mouse = { x: -9999, y: -9999 };
+  const COUNT = 440;
+  const COLORS = [
+    '#ffffff','#ffffff','#ffffff',
+    '#ffffff','#f8f6ff','#ffffff',
+    '#fff0f8','#ffffff','#f0f0ff',
+  ];
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', () => { resize(); init(); });
+
+  document.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+  document.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; });
+
+  class Particle {
+    constructor() { this.reset(true); }
+    reset(random) {
+      this.x  = random ? Math.random() * W : (Math.random() < .5 ? -10 : W + 10);
+      this.y  = Math.random() * H;
+      this.vx = (Math.random() - .5) * 0.4;
+      this.vy = (Math.random() - .5) * 0.4;
+      this.r  = Math.random() * 1.0 + 0.2;
+      this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      this.alpha = Math.random() * 0.45 + 0.25;
+      this.glow  = Math.random() > 0.65;
+      this.life  = 0;
+      this.maxLife = 600 + Math.random() * 800;
+    }
+    update() {
+      this.life++;
+      if (this.life > this.maxLife) { this.reset(false); return; }
+      this.x += this.vx; this.y += this.vy;
+      const dx = mouse.x - this.x, dy = mouse.y - this.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 180) { const f = (180-dist)/180; this.x += dx*f*0.025; this.y += dy*f*0.025; }
+      if (this.x < -20) this.x = W + 10;
+      if (this.x > W+20) this.x = -10;
+      if (this.y < -20) this.y = H + 10;
+      if (this.y > H+20) this.y = -10;
+    }
+    draw() {
+      const fade = this.life < 60 ? this.life/60 : this.life > this.maxLife-60 ? (this.maxLife-this.life)/60 : 1;
+      const a = this.alpha * fade;
+      if (this.glow) {
+        const gr = ctx.createRadialGradient(this.x,this.y,0,this.x,this.y,this.r*4.5);
+        gr.addColorStop(0, this.color+'cc'); gr.addColorStop(0.4, this.color+'55'); gr.addColorStop(1, this.color+'00');
+        ctx.globalAlpha = a*0.9; ctx.fillStyle = gr;
+        ctx.beginPath(); ctx.arc(this.x,this.y,this.r*4.5,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha = a; ctx.fillStyle = this.color;
+      ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  function init() { particles = Array.from({ length: COUNT }, () => new Particle()); }
+  init();
+
+  function drawLines() {
+    const MAX = 90;
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i+1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x, dy = particles[i].y - particles[j].y;
+        const d = Math.sqrt(dx*dx+dy*dy);
+        if (d < MAX) {
+          ctx.globalAlpha = (1-d/MAX)*0.28; ctx.strokeStyle = particles[i].color; ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(particles[i].x,particles[i].y); ctx.lineTo(particles[j].x,particles[j].y); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function drawCursorGlow() {
+    if (mouse.x < 0) return;
+    const g = ctx.createRadialGradient(mouse.x,mouse.y,0,mouse.x,mouse.y,140);
+    g.addColorStop(0,'rgba(235,0,101,0.12)'); g.addColorStop(0.5,'rgba(236,72,153,0.05)'); g.addColorStop(1,'transparent');
+    ctx.globalAlpha = 1; ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(mouse.x,mouse.y,140,0,Math.PI*2); ctx.fill();
+  }
+
+  function loop() {
+    ctx.clearRect(0,0,W,H);
+    drawCursorGlow(); drawLines();
+    particles.forEach(p => { p.update(); p.draw(); });
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+
+// ═══════════════════════════════════════
+//   SKILLS FLOATING PILLS
+// ═══════════════════════════════════════
+(function() {
+  var canvas = document.getElementById('skillcanvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  var SKILLS = [
+    { label: 'Figma',          icon: '🎨' },
+    { label: 'Photoshop',      icon: '🖼' },
+    { label: 'Illustrator',    icon: '✏️' },
+    { label: 'UX Research',    icon: '📐' },
+    { label: 'Prototyping',    icon: '⚡' },
+    { label: 'Design Systems', icon: '🧩' },
+    { label: 'User Testing',   icon: '👥' },
+    { label: 'Wireframing',    icon: '🗺' },
+    { label: 'HTML & CSS',     icon: '💻' },
+    { label: 'Motion Design',  icon: '🎬' },
+    { label: 'Principle',      icon: '🎯' },
+    { label: 'ProtoPie',       icon: '🔮' },
+    { label: 'Miro',           icon: '📋' },
+    { label: 'Branding',       icon: '💎' },
+    { label: 'Typography',     icon: '🖌' },
+    { label: 'Webflow',        icon: '🌐' },
+  ];
+
+  var PH   = 44;   // pill height
+  var PR   = 22;   // pill border-radius (= PH/2, fully round)
+  var PAD  = 14;   // horizontal inner padding
+  var GAP  =  6;   // gap between icon and text
+  var FS   = 13;   // font size for label
+  var IS   = 18;   // icon font size
+  var W, H;
+  var pills = [];
+  var mouse = { x: -9999, y: -9999 };
+
+  // Measure pill width (must be called after font is set)
+  function pillWidth(label) {
+    ctx.font = '600 ' + FS + 'px Inter,system-ui,sans-serif';
+    return Math.ceil(IS + GAP + ctx.measureText(label).width + PAD * 2);
+  }
+
+  function resize() {
+    W = canvas.width  = canvas.offsetWidth;
+    H = canvas.height = 480;
+  }
+
+  function init() {
+    var cx = W / 2, cy = H / 2;
+    pills = SKILLS.map(function(s) {
+      var pw = pillWidth(s.label);
+      var angle = Math.random() * Math.PI * 2;
+      var speed = 1.2 + Math.random() * 2.0;
+      return {
+        label: s.label,
+        icon:  s.icon,
+        pw:    pw,
+        x:     cx,
+        y:     cy,
+        vx:    Math.cos(angle) * speed,
+        vy:    Math.sin(angle) * speed,
+        hovered: false
+      };
+    });
+  }
+
+  function drawPill(p) {
+    var hw = p.pw / 2;
+    var x0 = p.x - hw, y0 = p.y - PR;
+
+    ctx.save();
+
+    // shadow
+    ctx.shadowColor  = 'rgba(120,100,180,0.18)';
+    ctx.shadowBlur   = 18;
+    ctx.shadowOffsetY = 4;
+
+    // fill — white glassmorphism
+    ctx.beginPath();
+    ctx.roundRect(x0, y0, p.pw, PH, PR);
+    ctx.fillStyle = p.hovered
+      ? 'rgba(255,255,255,0.82)'
+      : 'rgba(255,255,255,0.58)';
+    ctx.fill();
+
+    // white border
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = p.hovered
+      ? 'rgba(152,78,255,0.45)'
+      : 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.restore();
+
+    // icon
+    ctx.font = IS + 'px serif';
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(p.icon, x0 + PAD, p.y);
+
+    // label
+    ctx.font      = '600 ' + FS + 'px Inter,system-ui,sans-serif';
+    ctx.fillStyle = p.hovered ? '#984eff' : '#1a1830';
+    ctx.fillText(p.label, x0 + PAD + IS + GAP, p.y);
+  }
+
+  function hitTest(p) {
+    var hw = p.pw / 2;
+    return mouse.x >= p.x - hw && mouse.x <= p.x + hw &&
+           mouse.y >= p.y - PR  && mouse.y <= p.y + PR;
+  }
+
+  function loop() {
+    if (!pills.length || !W) { requestAnimationFrame(loop); return; }
+    ctx.clearRect(0, 0, W, H);
+
+    pills.forEach(function(p) {
+      var hw = p.pw / 2;
+
+      // mouse repulsion
+      var dx = p.x - mouse.x, dy = p.y - mouse.y;
+      var d  = Math.sqrt(dx * dx + dy * dy);
+      if (d < 110 && d > 0.1) {
+        var f = (110 - d) / 110 * 0.22;
+        p.vx += (dx / d) * f;
+        p.vy += (dy / d) * f;
+      }
+
+      // gentle random drift
+      p.vx += (Math.random() - 0.5) * 0.035;
+      p.vy += (Math.random() - 0.5) * 0.035;
+
+      // damping
+      p.vx *= 0.993;
+      p.vy *= 0.993;
+
+      // speed floor/cap
+      var sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+      if (sp > 3.5) { p.vx = p.vx / sp * 3.5; p.vy = p.vy / sp * 3.5; }
+      if (sp < 0.15) { p.vx += (Math.random() - 0.5) * 0.4; p.vy += (Math.random() - 0.5) * 0.4; }
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      // wall bounce
+      if (p.x - hw < 0)  { p.x = hw;      p.vx =  Math.abs(p.vx) * 0.8; }
+      if (p.x + hw > W)  { p.x = W - hw;  p.vx = -Math.abs(p.vx) * 0.8; }
+      if (p.y - PR  < 0) { p.y = PR;      p.vy =  Math.abs(p.vy) * 0.8; }
+      if (p.y + PR  > H) { p.y = H - PR;  p.vy = -Math.abs(p.vy) * 0.8; }
+
+      p.hovered = hitTest(p);
+      drawPill(p);
+    });
+
+    requestAnimationFrame(loop);
+  }
+
+  // Start everything after first layout paint
+  requestAnimationFrame(function() {
+    resize();
+    init();
+    loop();
+  });
+
+  window.addEventListener('resize', function() { resize(); init(); });
+
+  canvas.addEventListener('mousemove', function(e) {
+    var r = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+    canvas.style.cursor = pills.some(function(p) { return p.hovered; }) ? 'pointer' : 'default';
+  });
+  canvas.addEventListener('mouseleave', function() {
+    mouse.x = -9999; mouse.y = -9999;
+    pills.forEach(function(p) { p.hovered = false; });
+  });
+})();
+
+// ═══════════════════════════════════════
+//   SCROLL FADE-IN
+// ═══════════════════════════════════════
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { e.target.style.opacity='1'; e.target.style.transform='translateY(0)'; }
+  });
+}, { threshold: 0.12 });
+document.querySelectorAll('.pcard,.tcard,.case-card').forEach(el => {
+  el.style.opacity='0'; el.style.transform='translateY(20px)';
+  el.style.transition='opacity 0.55s ease,transform 0.55s ease';
+  io.observe(el);
+});
+
+
+</script>
+
+<script>
+// ═══════════════════════════════════════
+//   CASE OVERLAY  (separate script block)
+// ═══════════════════════════════════════
+var CASE_PROJECTS = {
+  fridj: {
+    name: 'Fridgie', desc: 'Smart food tracker & recipe generator',
+    tags: ['Mobile App','UX/UI','iOS'],
+    images: [
+      'Проекты/Fridj/Slice_1.png','Проекты/Fridj/Slice_2.png',
+      'Проекты/Fridj/Slice_3.png','Проекты/Fridj/Slice_4.png','Проекты/Fridj/Slice_5.png',
+      'Проекты/Fridj/Slise_06.png','Проекты/Fridj/Slise_07.png','Проекты/Fridj/Slise_08.png',
+      'Проекты/Fridj/Slise_09.png','Проекты/Fridj/Slise_10.png','Проекты/Fridj/Slise_11.png',
+      'Проекты/Fridj/Slise_12.png','Проекты/Fridj/Slise_13.png','Проекты/Fridj/Slise_14.png',
+      'Проекты/Fridj/Slice_14.png','Проекты/Fridj/Slice_15.png','Проекты/Fridj/Slice_17.png'
+    ]
+  },
+  beehive: {
+    name: 'BeeHive', desc: 'Community support platform for beekeepers',
+    tags: ['Mobile App','UX/UI','iOS'],
+    images: [
+      'Проекты/пчелы/01.png','Проекты/пчелы/02.png',
+      'Проекты/пчелы/03.png','Проекты/пчелы/04.png','Проекты/пчелы/05.png',
+      'Проекты/пчелы/05_1.png','Проекты/пчелы/05_2.png','Проекты/пчелы/06.png',
+      'Проекты/пчелы/07.png','Проекты/пчелы/08.png','Проекты/пчелы/09.png',
+      'Проекты/пчелы/10.png','Проекты/пчелы/11.png','Проекты/пчелы/12.png',
+      'Проекты/пчелы/13.png','Проекты/пчелы/14.png','Проекты/пчелы/15.png','Проекты/пчелы/16.png'
+    ]
+  },
+  unno: {
+    name: 'UNNO', desc: 'DNA of the clothing brand',
+    tags: ['Branding','Identity','Fashion'],
+    images: [
+      'Проекты/UNNO_eng/Экран1.png','Проекты/UNNO_eng/Экран2.png','Проекты/UNNO_eng/Экран3.png'
+    ]
+  },
+  restfood: {
+    name: 'RestFood', desc: 'Mobile app for prepared meal delivery services',
+    tags: ['Mobile App','UX/UI'],
+    images: [
+      'Проекты/RestFood/screen_01.png',
+      'Проекты/RestFood/screen_02.png',
+      'Проекты/RestFood/screen_04.png',
+      'Проекты/RestFood/screen_05.png',
+      'Проекты/RestFood/screen_06.png',
+      'Проекты/RestFood/screen_07.png',
+      'Проекты/RestFood/screen_08.png'
+    ]
+  }
+};
+
+function openCase(id) {
+  var proj = CASE_PROJECTS[id];
+  if (!proj) return;
+  document.getElementById('case-title').textContent    = proj.name;
+  document.getElementById('case-subtitle').textContent = proj.desc;
+  document.getElementById('case-overlay-tags').innerHTML =
+    proj.tags.map(function(t){ return '<span>'+t+'</span>'; }).join('');
+  document.getElementById('case-images').innerHTML =
+    proj.images.map(function(p){
+      var encoded = p.split('/').map(function(s){ return encodeURIComponent(s); }).join('/');
+      return '<img src="'+encoded+'" loading="lazy" alt="">';
+    }).join('');
+  var ov = document.getElementById('case-overlay');
+  ov.classList.add('open');
+  ov.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeCaseOverlay(e) {
+  if (e.target === document.getElementById('case-overlay')) {
+    document.getElementById('case-overlay').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+}
+
+function closeCase() {
+  document.getElementById('case-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeCase();
+});
+</script>
+</body>
+</html>
