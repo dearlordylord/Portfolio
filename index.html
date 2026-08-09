@@ -213,6 +213,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   /* Move text overlays to TOP — above the head */
   #st1 { left: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
   #st2 { right: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
+  /* Same font size on both sides */
+  .role-accent, .years-num { font-size: clamp(1.3rem, 6.5vw, 2.2rem) !important; white-space: normal !important; }
+  .role-sub, .years-word   { font-size: clamp(0.95rem, 4.5vw, 1.5rem) !important; }
+  .st-skills-list { font-size: clamp(0.62rem, 2.8vw, 0.8rem); margin-top: 0.6rem; }
   /* Bump z-index so explore CTA and strip stay above other layers in Safari */
   #explore-cta { z-index: 30 !important; }
   #photo-strip { z-index: 25 !important; }
@@ -333,9 +337,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
         <div class="skill-row"><span class="skill-label">Figma</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div></div></div>
         <div class="skill-row"><span class="skill-label">Photoshop</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div></div></div>
         <div class="skill-row"><span class="skill-label">Illustrator</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div><div class="sdot"></div></div></div>
-        <div class="skill-row"><span class="skill-label">Principle / ProtoPie</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div></div></div>
+        <div class="skill-row"><span class="skill-label">AI Content Generation</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div></div></div>
         <div class="skill-row"><span class="skill-label">Miro</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div></div></div>
-        <div class="skill-row"><span class="skill-label">HTML / CSS</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div><div class="sdot"></div></div></div>
+        <div class="skill-row"><span class="skill-label">HTML / CSS</span><div class="skill-dots"><div class="sdot on"></div><div class="sdot on"></div><div class="sdot"></div><div class="sdot"></div><div class="sdot"></div><div class="sdot"></div></div></div>
       </div>
 
     </div>
@@ -468,7 +472,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 // ═══════════════════════════════════════
 (function() {
   const TOTAL    = 150;
-  // ── Frame zone boundaries ──
+  // Mobile: only load/show frames 66-114 (49 frames instead of 150)
+  const MOB_START = 66;
+  const MOB_END   = 114;
+  // ── Frame zone boundaries (desktop) ──
   const F_INTRO_END  = 31;   // auto-play 0→31  (forced, blurry)
   const F_FREE1_END  = 68;   // scroll 28→68   (free, mouse-reactive)
   const F_FORCED_END = 87;   // auto-play 68→87 (forced, blurry)
@@ -485,9 +492,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   const st2 = document.getElementById('st2');
   const exploreCTA = document.getElementById('explore-cta');
 
+  const isMob = window.innerWidth <= 768;
   let images = new Array(TOTAL);
   let loaded = 0, ready = false;
-  let targetFrame = 0, displayFrame = 0;
+  // Mobile starts at frame 66; desktop starts at 0
+  let targetFrame = isMob ? MOB_START : 0;
+  let displayFrame = isMob ? MOB_START : 0;
   let mouseYNorm = 0.5;
 
   // ── noise PNG overlay ──
@@ -503,10 +513,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   resize();
 
   function draw(idx) {
-    idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
-    // On mobile we only loaded every 3rd frame — snap to nearest loaded one
-    const mobStep = canvas.width <= 768 ? 3 : 1;
-    if (mobStep > 1) idx = Math.min(TOTAL - 1, Math.round(idx / mobStep) * mobStep);
+    const isMobDraw = canvas.width <= 768;
+    if (isMobDraw) {
+      idx = Math.max(MOB_START, Math.min(MOB_END, Math.round(idx)));
+    } else {
+      idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
+    }
     const img = images[idx];
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
@@ -554,18 +566,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   }
 
   function pad(n) { return String(n).padStart(3, '0'); }
-  // On mobile: load every 3rd frame to cut load time ~3x
-  const isMob = window.innerWidth <= 768;
-  const LOAD_STEP = isMob ? 3 : 1;
-  const EXPECTED = isMob ? Math.ceil(TOTAL / LOAD_STEP) : TOTAL;
+  // Mobile: only load frames 66-114 (49 frames) for faster load
+  const EXPECTED = isMob ? (MOB_END - MOB_START + 1) : TOTAL;
   for (let i = 0; i < TOTAL; i++) {
-    if (isMob && i % LOAD_STEP !== 0) { images[i] = null; continue; }
+    if (isMob && (i < MOB_START || i > MOB_END)) { images[i] = null; continue; }
     const img = new Image();
     img.src = `Кадры/frame_${pad(i)}_delay-0.067s.webp`;
     img.onload = () => {
       loaded++;
       fill.style.width = (loaded / EXPECTED * 100) + '%';
-      if (!ready && loaded >= 1) draw(0);
+      if (!ready && loaded >= 1) draw(isMob ? MOB_START : 0);
       if (loaded === EXPECTED) {
         ready = true;
         setTimeout(() => loader.classList.add('hidden'), 400);
@@ -608,23 +618,47 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   }
 
   function updateOverlays(df) {
-    // st1 UX/UI: fades in frame 0→8, full 8→55, fades out 55→72
-    st1.style.opacity = frameOp(df, 0, 8, 55, 72);
-    // st2 15+ years: fades in frame 18→28, full 28→72, fades out 72→90
-    st2.style.opacity = frameOp(df, 18, 28, 72, 90);
-    // Explore button: appears when st1 is gone (frame 70+), pulses
-    const btnOp = Math.max(0, Math.min(1, (df - 68) / 8));
-    exploreCTA.style.opacity = btnOp;
-    exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
-    // scroll hint: скрывается только когда пользователь начинает скроллить
-    // (управляется из onScroll по prog, здесь не трогаем)
+    if (canvas.width <= 768) {
+      // Mobile: st1 UX/UI shows frames 66→99, st2 14+ years shows 100→114
+      st1.style.opacity = frameOp(df, 66, 72, 93, 99);
+      st2.style.opacity = frameOp(df, 100, 106, 110, 114);
+      const btnOp = Math.max(0, Math.min(1, (df - 112) / 2));
+      exploreCTA.style.opacity = btnOp;
+      exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
+    } else {
+      // Desktop
+      st1.style.opacity = frameOp(df, 0, 8, 55, 72);
+      st2.style.opacity = frameOp(df, 18, 28, 72, 90);
+      const btnOp = Math.max(0, Math.min(1, (df - 68) / 8));
+      exploreCTA.style.opacity = btnOp;
+      exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
+    }
   }
 
+  let snapQueued = false;
   function onScroll() {
     const prog = getScrollProg();
     progBar.style.width = (prog * 100) + '%';
     if (prog > 0.04) hint.classList.add('gone');
     else             hint.classList.remove('gone');
+
+    // Smooth-snap to About when animation finishes (mobile & desktop)
+    if (prog >= 0.98 && !snapQueued) {
+      snapQueued = true;
+      setTimeout(function() {
+        const about = document.getElementById('about');
+        if (about) about.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+    }
+    if (prog < 0.90) snapQueued = false;
+
+    if (canvas.width <= 768) {
+      // Mobile: scroll directly maps to frames 66→114
+      targetFrame = MOB_START + prog * (MOB_END - MOB_START);
+      targetFrame = Math.max(MOB_START, Math.min(MOB_END, targetFrame));
+      return;
+    }
+
     if (mode === 'intro' || mode === 'forced2') return; // time-based, ignore scroll
     if (mode === 'free1') {
       const p = Math.min(1, prog / SCROLL_SPLIT);
@@ -658,20 +692,26 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   function animLoop(now) {
     if (!ready) { requestAnimationFrame(animLoop); return; }
 
-    if (mode === 'intro') {
-      if (!introStartTime) introStartTime = now;
-      const t    = Math.min(1, (now - introStartTime) / INTRO_MS);
-      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-      targetFrame = ease * F_INTRO_END;
-      if (t >= 1) { mode = 'free1'; targetFrame = F_INTRO_END; }
-    } else if (mode === 'forced2') {
-      const t    = Math.min(1, (now - forced2StartT) / FORCED2_MS);
-      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-      targetFrame = F_FREE1_END + ease * (F_FORCED_END - F_FREE1_END);
-      if (t >= 1) { mode = 'free2'; targetFrame = F_FORCED_END; onScroll(); }
+    if (canvas.width <= 768) {
+      // Mobile: no mode machine — scroll drives frames directly
+      displayFrame = lerp(displayFrame, targetFrame, 0.12);
+    } else {
+      // Desktop: mode machine
+      if (mode === 'intro') {
+        if (!introStartTime) introStartTime = now;
+        const t    = Math.min(1, (now - introStartTime) / INTRO_MS);
+        const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+        targetFrame = ease * F_INTRO_END;
+        if (t >= 1) { mode = 'free1'; targetFrame = F_INTRO_END; }
+      } else if (mode === 'forced2') {
+        const t    = Math.min(1, (now - forced2StartT) / FORCED2_MS);
+        const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+        targetFrame = F_FREE1_END + ease * (F_FORCED_END - F_FREE1_END);
+        if (t >= 1) { mode = 'free2'; targetFrame = F_FORCED_END; onScroll(); }
+      }
+      displayFrame = lerp(displayFrame, targetFrame, 0.07);
     }
 
-    displayFrame = lerp(displayFrame, targetFrame, 0.07);
     updateOverlays(displayFrame);
     draw(displayFrame);
     requestAnimationFrame(animLoop);
@@ -797,11 +837,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     { label: 'Design Systems', icon: '🧩' },
     { label: 'User Testing',   icon: '👥' },
     { label: 'Wireframing',    icon: '🗺' },
-    { label: 'HTML & CSS',     icon: '💻' },
-    { label: 'Motion Design',  icon: '🎬' },
-    { label: 'Principle',      icon: '🎯' },
-    { label: 'ProtoPie',       icon: '🔮' },
-    { label: 'Miro',           icon: '📋' },
+    { label: 'HTML & CSS',         icon: '💻' },
+    { label: 'Motion Design',      icon: '🎬' },
+    { label: 'AI Generation',      icon: '🤖' },
+    { label: 'Miro',               icon: '📋' },
     { label: 'Branding',       icon: '💎' },
     { label: 'Typography',     icon: '🖌' },
     { label: 'Webflow',        icon: '🌐' },
