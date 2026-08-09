@@ -210,13 +210,33 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* Move text overlays to TOP — above the head */
-  #st1 { left: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
-  #st2 { right: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
-  /* Same font size on both sides */
-  .role-accent, .years-num { font-size: clamp(1.3rem, 6.5vw, 2.2rem) !important; white-space: normal !important; }
-  .role-sub, .years-word   { font-size: clamp(0.95rem, 4.5vw, 1.5rem) !important; }
-  .st-skills-list { font-size: clamp(0.62rem, 2.8vw, 0.8rem); margin-top: 0.6rem; }
+  /* st1: full-width, left-aligned, upper portion */
+  #st1 {
+    left: 6% !important; right: auto !important;
+    top: 5vh !important; transform: none !important;
+    max-width: 88% !important; width: 88% !important;
+    text-align: left !important;
+  }
+  /* st2: full-width, CENTERED, upper portion */
+  #st2 {
+    left: 50% !important; right: auto !important;
+    top: 5vh !important; transform: translateX(-50%) !important;
+    max-width: 88% !important; width: 88% !important;
+    text-align: center !important;
+  }
+  /* Large titles — same size on both sides */
+  .role-accent, .years-num {
+    font-size: clamp(2.8rem, 17vw, 5.5rem) !important;
+    white-space: normal !important; line-height: 0.88 !important;
+  }
+  .role-sub, .years-word {
+    font-size: clamp(2rem, 13vw, 4rem) !important;
+    line-height: 1 !important;
+  }
+  /* Supporting text */
+  .st-skills-list { font-size: clamp(0.9rem, 4.5vw, 1.2rem); margin-top: 1rem; line-height: 1.8; }
+  .st-line-sm { font-size: clamp(1rem, 5.5vw, 1.5rem) !important; margin-top: 0.6rem; }
+  .st-sub { font-size: clamp(0.75rem, 3.8vw, 1rem); margin-top: 0.4rem; }
   /* Bump z-index so explore CTA and strip stay above other layers in Safari */
   #explore-cta { z-index: 30 !important; }
   #photo-strip { z-index: 25 !important; }
@@ -525,8 +545,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     const iw = img.naturalWidth, ih = img.naturalHeight;
     const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.49 : 0.65);
     const w = iw * s, h = ih * s;
-    // position white strip and explore CTA exactly at photo bottom edge
-    const photoBottom = (ch - h) / 2 + h;
+    // position white strip and explore CTA at photo bottom edge
+    // mobile: photo is bottom-anchored → bottom edge = ch
+    const photoBottom = (cw <= 768) ? ch : (ch - h) / 2 + h;
     const strip = document.getElementById('photo-strip');
     if (strip) strip.style.top = photoBottom + 'px';
     if (exploreCTA) exploreCTA.style.top = photoBottom + 'px';
@@ -549,10 +570,11 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.fillText('IVASHCHENKO', cw / 2 + xOff, ch * 0.56);
     ctx.restore();
 
-    // ── 2. Photo shifted right — clean left area for text ──
+    // ── 2. Photo — mobile: bottom-anchored; desktop: centered ──
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(img, (cw - w) / 2 + xOff, (ch - h) / 2, w, h);
+    const yPos = (cw <= 768) ? (ch - h) : (ch - h) / 2;
+    ctx.drawImage(img, (cw - w) / 2 + xOff, yPos, w, h);
 
     // ── 3. ШУМ.png noise via multiply — dark grain visible on light areas ──
     if (noiseImg.complete && noiseImg.naturalWidth) {
