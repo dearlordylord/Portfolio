@@ -114,7 +114,7 @@ section { position: relative; z-index: 1; }
 #case-overlay-tags { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 #case-overlay-tags span { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; padding: 0.22rem 0.65rem; border-radius: 100px; background: rgba(152,78,255,0.2); color: #c39eff; border: 1px solid rgba(152,78,255,0.3); }
 #case-images { line-height: 0; font-size: 0; border-radius: 20px; overflow: hidden; }
-#case-images img { display: block; width: 100%; }
+#case-images img { display: block; width: 100%; vertical-align: bottom; margin: 0; padding: 0; }
 @media(max-width:600px)  { .case-grid { grid-template-columns: 1fr; } }
 @media(max-width:900px)  { #case-overlay-inner { padding: 5rem 0 4rem; } }
 
@@ -208,6 +208,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   .ccard { padding: 2rem; }
   #st1 { left: 4%; max-width: 55%; }
   #st2 { right: 4%; max-width: 55%; }
+}
+@media (max-width: 768px) {
+  /* Move text overlays to TOP — above the head */
+  #st1 { left: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
+  #st2 { right: 5% !important; top: 4vh !important; transform: none !important; max-width: 46% !important; }
+  /* Bump z-index so explore CTA and strip stay above other layers in Safari */
+  #explore-cta { z-index: 30 !important; }
+  #photo-strip { z-index: 25 !important; }
+  /* Case overlay full-width on small screens */
+  #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
 }
 </style>
 </head>
@@ -494,11 +504,14 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function draw(idx) {
     idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
+    // On mobile we only loaded every 3rd frame — snap to nearest loaded one
+    const mobStep = canvas.width <= 768 ? 3 : 1;
+    if (mobStep > 1) idx = Math.min(TOTAL - 1, Math.round(idx / mobStep) * mobStep);
     const img = images[idx];
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = Math.max(cw / iw, ch / ih) * 0.65;
+    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.49 : 0.65);
     const w = iw * s, h = ih * s;
     // position white strip and explore CTA exactly at photo bottom edge
     const photoBottom = (ch - h) / 2 + h;
@@ -541,14 +554,19 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   }
 
   function pad(n) { return String(n).padStart(3, '0'); }
+  // On mobile: load every 3rd frame to cut load time ~3x
+  const isMob = window.innerWidth <= 768;
+  const LOAD_STEP = isMob ? 3 : 1;
+  const EXPECTED = isMob ? Math.ceil(TOTAL / LOAD_STEP) : TOTAL;
   for (let i = 0; i < TOTAL; i++) {
+    if (isMob && i % LOAD_STEP !== 0) { images[i] = null; continue; }
     const img = new Image();
     img.src = `Кадры/frame_${pad(i)}_delay-0.067s.webp`;
     img.onload = () => {
       loaded++;
-      fill.style.width = (loaded / TOTAL * 100) + '%';
+      fill.style.width = (loaded / EXPECTED * 100) + '%';
       if (!ready && loaded >= 1) draw(0);
-      if (loaded === TOTAL) {
+      if (loaded === EXPECTED) {
         ready = true;
         setTimeout(() => loader.classList.add('hidden'), 400);
       }
