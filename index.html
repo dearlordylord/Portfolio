@@ -137,15 +137,15 @@ section { position: relative; z-index: 1; }
 
 /* SKILLS */
 #skills .sw { text-align: center; }
-#skillcanvas { width: 100%; height: 480px; display: block; margin-top: 2.5rem; cursor: default; }
+#skillcanvas { width: 100%; height: 520px; display: block; margin-top: 2rem; cursor: default; }
 
 /* CONTACT */
-#contact .sw { text-align: center; max-width: 680px; }
-.ccard { background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: none; border-radius: 28px; padding: 3.5rem; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 8px 48px rgba(120,100,180,0.1); position: relative; overflow: hidden; }
-.ccard::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04)); }
-.ccard > * { position: relative; }
-.ctitle { font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 0.8rem; line-height: 1.2; }
-.csub { color: var(--muted); margin-bottom: 2rem; }
+#contact .sw { text-align: center; max-width: 780px; }
+.ccard { background: none; border: none; border-radius: 0; padding: 3.5rem 0; box-shadow: none; position: relative; overflow: visible; }
+/* 3D title wrap */
+#ctitle-3d { display: inline-block; transform-style: preserve-3d; will-change: transform; cursor: default; }
+.ctitle { font-family: 'Syne', sans-serif; font-size: clamp(2.4rem, 5.5vw, 5rem); font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; margin-bottom: 1.2rem; color: var(--text); }
+.csub { color: var(--muted); margin-bottom: 2.2rem; font-size: 1rem; }
 .clinks { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
 .cl { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 1.4rem; background: rgba(120,100,180,0.06); border: 1px solid var(--gb); border-radius: 100px; color: var(--text); text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: all 0.25s; }
 .cl:hover { background: rgba(235,0,101,0.06); border-color: rgba(235,0,101,0.35); color: var(--v); transform: translateY(-2px); }
@@ -210,7 +210,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #about .sw { grid-template-columns: 1fr; gap: 2.5rem; }
   .sw { padding: 5rem 1.5rem; }
   .pcard.feat { grid-column: span 1; }
-  .ccard { padding: 2rem; }
+  .ccard { padding: 2rem 0; }
   #st1 { left: 4%; max-width: 55%; }
   #st2 { right: 4%; max-width: 55%; }
 }
@@ -466,7 +466,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 <section id="contact">
   <div class="sw">
     <div class="ccard">
-      <div class="ctitle">Let's work<br>together</div>
+      <div id="ctitle-3d">
+        <div class="ctitle">Let's build<br>something great</div>
+      </div>
       <p class="csub">Open to full-time and freelance UX/UI roles. Remote-first.</p>
       <div class="clinks">
         <a href="mailto:iceiii888@gmail.com" class="cl">✉️ iceiii888@gmail.com</a>
@@ -848,7 +850,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 })();
 
 // ═══════════════════════════════════════
-//   SKILLS FLOATING PILLS
+//   SKILLS — floating circles
 // ═══════════════════════════════════════
 (function() {
   var canvas = document.getElementById('skillcanvas');
@@ -856,174 +858,179 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   var ctx = canvas.getContext('2d');
 
   var SKILLS = [
-    { label: 'Figma',          icon: '🎨' },
-    { label: 'Photoshop',      icon: '🖼' },
-    { label: 'Illustrator',    icon: '✏️' },
-    { label: 'UX Research',    icon: '📐' },
-    { label: 'Prototyping',    icon: '⚡' },
-    { label: 'Design Systems', icon: '🧩' },
-    { label: 'User Testing',   icon: '👥' },
-    { label: 'Wireframing',    icon: '🗺' },
-    { label: 'HTML & CSS',         icon: '💻' },
-    { label: 'Motion Design',      icon: '🎬' },
-    { label: 'AI Generation',      icon: '🤖' },
-    { label: 'Miro',               icon: '📋' },
-    { label: 'Branding',       icon: '💎' },
-    { label: 'Typography',     icon: '🖌' },
-    { label: 'Webflow',        icon: '🌐' },
+    { label: 'Figma',          icon: '🎨', r: 64 },
+    { label: 'UX Research',    icon: '📐', r: 60 },
+    { label: 'Prototyping',    icon: '⚡', r: 55 },
+    { label: 'Design Systems', icon: '🧩', r: 62 },
+    { label: 'User Testing',   icon: '👥', r: 52 },
+    { label: 'Motion Design',  icon: '🎬', r: 56 },
+    { label: 'AI Generation',  icon: '🤖', r: 58 },
+    { label: 'Photoshop',      icon: '🖼',  r: 50 },
+    { label: 'Illustrator',    icon: '✏️',  r: 48 },
+    { label: 'HTML & CSS',     icon: '💻', r: 44 },
+    { label: 'Webflow',        icon: '🌐', r: 42 },
+    { label: 'Miro',           icon: '📋', r: 44 },
+    { label: 'Branding',       icon: '💎', r: 52 },
+    { label: 'Typography',     icon: '🖌', r: 46 },
   ];
 
-  var PH   = 44;   // pill height
-  var PR   = 22;   // pill border-radius (= PH/2, fully round)
-  var PAD  = 14;   // horizontal inner padding
-  var GAP  =  6;   // gap between icon and text
-  var FS   = 13;   // font size for label
-  var IS   = 18;   // icon font size
-  var W, H;
-  var pills = [];
+  var W, H, chips;
   var mouse = { x: -9999, y: -9999 };
 
-  // Measure pill width (must be called after font is set)
-  function pillWidth(label) {
-    ctx.font = '600 ' + FS + 'px Inter,system-ui,sans-serif';
-    return Math.ceil(IS + GAP + ctx.measureText(label).width + PAD * 2);
-  }
-
   function resize() {
-    W = canvas.width  = canvas.offsetWidth;
-    H = canvas.height = 480;
+    var dpr = window.devicePixelRatio || 1;
+    W = canvas.offsetWidth;
+    H = window.innerWidth <= 768 ? 440 : 520;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function init() {
-    var cx = W / 2, cy = H / 2;
-    pills = SKILLS.map(function(s) {
-      var pw = pillWidth(s.label);
-      var angle = Math.random() * Math.PI * 2;
-      var speed = 1.2 + Math.random() * 2.0;
+    resize();
+    var mob  = window.innerWidth <= 768;
+    var list = mob ? SKILLS.slice(0, 10) : SKILLS;
+    var sc   = mob ? 0.65 : 1;
+    var cols = Math.ceil(Math.sqrt(list.length * W / H));
+    var rows = Math.ceil(list.length / cols);
+    chips = list.map(function(sk, i) {
+      var r   = Math.round(sk.r * sc);
+      var col = i % cols, row = Math.floor(i / cols);
+      var x   = (col + 0.5 + (Math.random()-0.5)*0.5) * (W / cols);
+      var y   = (row + 0.5 + (Math.random()-0.5)*0.5) * (H / rows);
+      var ang = Math.random() * Math.PI * 2;
+      var spd = 0.8 + Math.random() * 1.4;
       return {
-        label: s.label,
-        icon:  s.icon,
-        pw:    pw,
-        x:     cx,
-        y:     cy,
-        vx:    Math.cos(angle) * speed,
-        vy:    Math.sin(angle) * speed,
-        hovered: false
+        label: sk.label, icon: sk.icon, r: r,
+        x: Math.max(r, Math.min(W-r, x)),
+        y: Math.max(r, Math.min(H-r, y)),
+        vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
+        get mass() { return this.r * this.r; }
       };
     });
   }
 
-  function drawPill(p) {
-    var hw = p.pw / 2;
-    var x0 = p.x - hw, y0 = p.y - PR;
+  function drawChip(c) {
+    var x = c.x, y = c.y, r = c.r;
 
+    // outer soft shadow
     ctx.save();
-
-    // shadow
-    ctx.shadowColor  = 'rgba(120,100,180,0.18)';
-    ctx.shadowBlur   = 18;
-    ctx.shadowOffsetY = 4;
-
-    // fill — white glassmorphism
-    ctx.beginPath();
-    ctx.roundRect(x0, y0, p.pw, PH, PR);
-    ctx.fillStyle = p.hovered
-      ? 'rgba(255,255,255,0.82)'
-      : 'rgba(255,255,255,0.58)';
+    ctx.shadowColor   = 'rgba(120,100,180,0.10)';
+    ctx.shadowBlur    = 22;
+    ctx.shadowOffsetY = 3;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.01)'; // trigger shadow
     ctx.fill();
-
-    // white border
-    ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = p.hovered
-      ? 'rgba(152,78,255,0.45)'
-      : 'rgba(255,255,255,0.95)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
     ctx.restore();
 
-    // icon
-    ctx.font = IS + 'px serif';
-    ctx.textAlign    = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(p.icon, x0 + PAD, p.y);
+    // card-style gradient fill: linear 135° white 0.4 → white 0.2
+    ctx.save();
+    var gx0 = x - r * 0.707, gy0 = y - r * 0.707;
+    var gx1 = x + r * 0.707, gy1 = y + r * 0.707;
+    var grad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+    grad.addColorStop(0,   'rgba(255,255,255,0.45)');
+    grad.addColorStop(1,   'rgba(255,255,255,0.20)');
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.restore();
 
-    // label
-    ctx.font      = '600 ' + FS + 'px Inter,system-ui,sans-serif';
-    ctx.fillStyle = p.hovered ? '#984eff' : '#1a1830';
-    ctx.fillText(p.label, x0 + PAD + IS + GAP, p.y);
+    // overlay shimmer layer (like pcard::before gradient)
+    ctx.save();
+    var ov = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+    ov.addColorStop(0, 'rgba(255,255,255,0.18)');
+    ov.addColorStop(1, 'rgba(255,255,255,0.04)');
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = ov;
+    ctx.fill();
+    ctx.restore();
+
+    // white inset border — like box-shadow inset 0 0 0 1px rgba(255,255,255,1)
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // icon + label
+    var iSize  = Math.floor(r * 0.50);
+    var lSize  = Math.max(9, Math.floor(r * 0.22));
+    var gap    = Math.floor(r * 0.07);
+    var totalH = iSize * 0.72 + gap + lSize;
+    var iY     = y - totalH / 2 + iSize * 0.36;
+    var lY     = iY + iSize * 0.36 + gap + lSize * 0.5;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = iSize + 'px sans-serif';
+    ctx.fillText(c.icon, x, iY);
+    ctx.font = '600 ' + lSize + 'px Syne,system-ui,sans-serif';
+    ctx.fillStyle = 'rgba(12,5,28,0.72)';
+    ctx.fillText(c.label, x, lY);
+    ctx.restore();
   }
 
-  function hitTest(p) {
-    var hw = p.pw / 2;
-    return mouse.x >= p.x - hw && mouse.x <= p.x + hw &&
-           mouse.y >= p.y - PR  && mouse.y <= p.y + PR;
+  function resolveCollision(a, b) {
+    var dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy), minD = a.r+b.r;
+    if (d >= minD || d < 0.01) return;
+    var ov = (minD-d)/2, nx = dx/d, ny = dy/d;
+    a.x -= nx*ov; a.y -= ny*ov; b.x += nx*ov; b.y += ny*ov;
+    var dvx = b.vx-a.vx, dvy = b.vy-a.vy, dot = dvx*nx+dvy*ny;
+    if (dot >= 0) return;
+    var imp = 1.68*dot/(a.mass+b.mass);
+    a.vx += imp*b.mass*nx; a.vy += imp*b.mass*ny;
+    b.vx -= imp*a.mass*nx; b.vy -= imp*a.mass*ny;
   }
 
   function loop() {
-    if (!pills.length || !W) { requestAnimationFrame(loop); return; }
+    if (!chips || !W) { requestAnimationFrame(loop); return; }
     ctx.clearRect(0, 0, W, H);
 
-    pills.forEach(function(p) {
-      var hw = p.pw / 2;
-
+    chips.forEach(function(c) {
+      // gentle gravity
+      c.vy += 0.01;
+      // subtle random drift
+      c.vx += (Math.random()-0.5)*0.01;
+      c.vy += (Math.random()-0.5)*0.01;
       // mouse repulsion
-      var dx = p.x - mouse.x, dy = p.y - mouse.y;
-      var d  = Math.sqrt(dx * dx + dy * dy);
-      if (d < 110 && d > 0.1) {
-        var f = (110 - d) / 110 * 0.22;
-        p.vx += (dx / d) * f;
-        p.vy += (dy / d) * f;
-      }
-
-      // gentle random drift
-      p.vx += (Math.random() - 0.5) * 0.035;
-      p.vy += (Math.random() - 0.5) * 0.035;
-
+      var dx = c.x-mouse.x, dy = c.y-mouse.y, d = Math.sqrt(dx*dx+dy*dy);
+      var range = c.r * 4.2;
+      if (d < range && d > 1) { var f=(1-d/range)*3.8; c.vx+=dx/d*f; c.vy+=dy/d*f; }
       // damping
-      p.vx *= 0.993;
-      p.vy *= 0.993;
-
-      // speed floor/cap
-      var sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-      if (sp > 3.5) { p.vx = p.vx / sp * 3.5; p.vy = p.vy / sp * 3.5; }
-      if (sp < 0.15) { p.vx += (Math.random() - 0.5) * 0.4; p.vy += (Math.random() - 0.5) * 0.4; }
-
-      p.x += p.vx;
-      p.y += p.vy;
-
-      // wall bounce
-      if (p.x - hw < 0)  { p.x = hw;      p.vx =  Math.abs(p.vx) * 0.8; }
-      if (p.x + hw > W)  { p.x = W - hw;  p.vx = -Math.abs(p.vx) * 0.8; }
-      if (p.y - PR  < 0) { p.y = PR;      p.vy =  Math.abs(p.vy) * 0.8; }
-      if (p.y + PR  > H) { p.y = H - PR;  p.vy = -Math.abs(p.vy) * 0.8; }
-
-      p.hovered = hitTest(p);
-      drawPill(p);
+      c.vx *= 0.976; c.vy *= 0.976;
+      // speed cap
+      var spd = Math.sqrt(c.vx*c.vx+c.vy*c.vy);
+      if (spd > 5) { c.vx *= 5/spd; c.vy *= 5/spd; }
+      c.x += c.vx; c.y += c.vy;
+      // walls
+      if (c.x-c.r<0){c.x=c.r; c.vx=Math.abs(c.vx)*0.72;}
+      if (c.x+c.r>W){c.x=W-c.r; c.vx=-Math.abs(c.vx)*0.72;}
+      if (c.y-c.r<0){c.y=c.r; c.vy=Math.abs(c.vy)*0.72;}
+      if (c.y+c.r>H){c.y=H-c.r; c.vy=-Math.abs(c.vy)*0.72;}
     });
 
+    for (var i=0; i<chips.length; i++)
+      for (var j=i+1; j<chips.length; j++)
+        resolveCollision(chips[i], chips[j]);
+
+    chips.forEach(drawChip);
     requestAnimationFrame(loop);
   }
 
-  // Start everything after first layout paint
-  requestAnimationFrame(function() {
-    resize();
-    init();
-    loop();
-  });
-
-  window.addEventListener('resize', function() { resize(); init(); });
-
   canvas.addEventListener('mousemove', function(e) {
-    var r = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - r.left;
-    mouse.y = e.clientY - r.top;
-    canvas.style.cursor = pills.some(function(p) { return p.hovered; }) ? 'pointer' : 'default';
+    var r = canvas.getBoundingClientRect(); mouse.x=e.clientX-r.left; mouse.y=e.clientY-r.top;
   });
-  canvas.addEventListener('mouseleave', function() {
-    mouse.x = -9999; mouse.y = -9999;
-    pills.forEach(function(p) { p.hovered = false; });
-  });
+  canvas.addEventListener('mouseleave', function() { mouse.x=-9999; mouse.y=-9999; });
+  canvas.addEventListener('touchmove', function(e) {
+    e.preventDefault(); var r=canvas.getBoundingClientRect();
+    mouse.x=e.touches[0].clientX-r.left; mouse.y=e.touches[0].clientY-r.top;
+  }, { passive: false });
+  canvas.addEventListener('touchend', function() { mouse.x=-9999; mouse.y=-9999; });
+  window.addEventListener('resize', function() { init(); });
+
+  requestAnimationFrame(function() { init(); loop(); });
 })();
 
 // ═══════════════════════════════════════
@@ -1127,6 +1134,51 @@ function closeCase() {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeCase();
 });
+</script>
+
+<script>
+// ═══════════════════════════════════════
+//   CONTACT TITLE — 3D TILT
+// ═══════════════════════════════════════
+(function() {
+  var el = document.getElementById('ctitle-3d');
+  if (!el) return;
+
+  var MAX_RY = 14, MAX_RX = 9; // max degrees
+  var tx = 0, ty = 0, cx = 0, cy = 0;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // Desktop: mouse tracking (global — works anywhere on page)
+  document.addEventListener('mousemove', function(e) {
+    if (window.innerWidth <= 768) return;
+    var rect = el.getBoundingClientRect();
+    // distance from element center, normalized to half-screen
+    var mx = (e.clientX - (rect.left + rect.width  / 2)) / (window.innerWidth  / 2);
+    var my = (e.clientY - (rect.top  + rect.height / 2)) / (window.innerHeight / 2);
+    ty = mx * MAX_RY;
+    tx = -my * MAX_RX;
+  });
+
+  // Mouse leaves window → reset to flat
+  document.addEventListener('mouseleave', function() { tx = 0; ty = 0; });
+
+  // Mobile: gyroscope
+  window.addEventListener('deviceorientation', function(e) {
+    if (window.innerWidth > 768) return;
+    ty = Math.max(-MAX_RY, Math.min(MAX_RY, (e.gamma || 0) * 0.55));
+    tx = Math.max(-MAX_RX, Math.min(MAX_RX, -((e.beta  || 45) - 45) * 0.3));
+  });
+
+  // Smooth rAF loop
+  (function loop() {
+    cx = lerp(cx, tx, 0.075);
+    cy = lerp(cy, ty, 0.075);
+    el.style.transform =
+      'perspective(700px) rotateX(' + cx.toFixed(2) + 'deg) rotateY(' + cy.toFixed(2) + 'deg)';
+    requestAnimationFrame(loop);
+  })();
+})();
 </script>
 </body>
 </html>
