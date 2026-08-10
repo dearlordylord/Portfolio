@@ -173,14 +173,19 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 #explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 22; opacity: 0; pointer-events: none; white-space: nowrap; top: 100%; }
 /* second noise layer — on top of everything for texture */
 #noise-top { position: absolute; inset: 0; z-index: 21; background: url('Кадры/ШУМ.png') center/cover; mix-blend-mode: multiply; opacity: 0.42; pointer-events: none; }
-/* st1 left — UX/UI */
-.role-accent { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.02em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.role-sub    { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 800; line-height: 1; color: var(--p); letter-spacing: -0.02em; }
+/* ── Hero typography scale ─────────────────────────────
+   H0 → UX/UI · 14+      (gradient, biggest)
+   H1 → Designer · years  (purple, large)
+   H2 → supporting text   (muted, small)
+────────────────────────────────────────────────────── */
+.hero-h0 { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.02em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.hero-h1 { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 800; line-height: 1; color: var(--p); letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+.hero-h2 { font-family: 'Syne', sans-serif; font-size: clamp(0.9rem, 1.5vw, 1.3rem); font-weight: 600; line-height: 1.5; color: var(--text); margin-top: 0.8rem; }
+/* aliases — keep old names working */
+.role-accent, .years-num { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.02em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.role-sub, .years-word { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 800; line-height: 1; color: var(--p); letter-spacing: -0.02em; margin-bottom: 0.5rem; }
 .st-skills-list { font-size: clamp(0.72rem, 1vw, 0.88rem); color: var(--muted); line-height: 2; letter-spacing: 0.04em; margin-top: 1.4rem; }
 .st-skills-list span { display: block; }
-/* st2 right — years */
-.years-num  { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.8rem, 3.2vw, 4rem); font-weight: 800; line-height: 0.92; letter-spacing: -0.03em; white-space: nowrap; background: linear-gradient(135deg, #eb0065 10%, #984eff 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.years-word { display: block; font-family: 'Syne', sans-serif; font-size: clamp(1.2rem, 2.2vw, 2.8rem); font-weight: 700; color: var(--p); line-height: 1; margin-bottom: 0.5rem; }
 .st-line-sm { font-family: 'Syne', sans-serif; font-size: clamp(1rem, 1.8vw, 1.6rem); font-weight: 600; line-height: 1.3; color: var(--text); }
 .st-line    { font-family: 'Syne', sans-serif; font-size: clamp(1.5rem, 2.8vw, 2.6rem); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; color: var(--text); }
 .st-sub     { font-size: 0.95rem; color: var(--muted); margin-top: 0.6rem; line-height: 1.6; }
@@ -224,12 +229,13 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     max-width: 88% !important; width: 88% !important;
     text-align: center !important;
   }
-  /* Large titles — same size on both sides */
-  .role-accent, .years-num {
+  /* H0: UX/UI · 14+ */
+  .hero-h0, .role-accent, .years-num {
     font-size: clamp(2.8rem, 17vw, 5.5rem) !important;
     white-space: normal !important; line-height: 0.88 !important;
   }
-  .role-sub, .years-word {
+  /* H1: Designer · years */
+  .hero-h1, .role-sub, .years-word {
     font-size: clamp(2rem, 13vw, 4rem) !important;
     line-height: 1 !important;
   }
@@ -280,21 +286,20 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     <!-- white strip exactly under photo bottom edge, positioned by JS -->
     <div id="photo-strip"></div>
 
-    <!-- overlay 1: left — UX/UI + skills (frames 0-32) -->
+    <!-- overlay 1: left — UX/UI + skills -->
     <div class="st" id="st1">
-      <span class="role-accent">UX/UI</span>
-      <span class="role-sub">Designer</span>
+      <span class="hero-h0">UX/UI</span>
+      <span class="hero-h1">Designer</span>
       <div class="st-skills-list">
-        <span>Figma · Design Systems</span>
         <span>UX Research · User Flows</span>
-        <span>Prototyping · Wireframing</span>
+        <span>Prototyping · Figma</span>
       </div>
     </div>
 
-    <!-- overlay 2: RIGHT — years (frames 33-65, she looks at it) -->
+    <!-- overlay 2: RIGHT — years -->
     <div class="st" id="st2">
-      <span class="years-num">14+</span>
-      <span class="years-word">years</span>
+      <span class="hero-h0">14+</span>
+      <span class="hero-h1">years</span>
       <div class="st-line-sm">turning ideas<br>into experiences</div>
       <div class="st-sub">Dating · GameFi · Crypto · Brand</div>
     </div>
@@ -641,8 +646,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function updateOverlays(df) {
     if (canvas.width <= 768) {
-      // Mobile: st1 UX/UI shows frames 66→99, st2 14+ years shows 100→114
-      st1.style.opacity = frameOp(df, 66, 72, 93, 99);
+      // Mobile: st1 UX/UI — appears immediately at frame 66, fades out 93→99
+      st1.style.opacity = frameOp(df, 66, 66, 93, 99);
       st2.style.opacity = frameOp(df, 100, 106, 110, 114);
       const btnOp = Math.max(0, Math.min(1, (df - 112) / 2));
       exploreCTA.style.opacity = btnOp;
