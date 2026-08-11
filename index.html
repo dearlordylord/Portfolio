@@ -392,6 +392,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     font-size: clamp(2.8rem, 17vw, 5.5rem) !important;
     white-space: normal !important; line-height: 0.88 !important;
   }
+  /* mobile: hide UX/UI, show 14+ instead */
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
   /* H1: Designer · years */
   .hero-h1, .role-sub, .years-word {
     font-size: clamp(2rem, 13vw, 4rem) !important;
@@ -446,7 +449,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
     <!-- overlay 1: left — UX/UI + skills -->
     <div class="st" id="st1">
-      <span class="hero-h0">UX/UI</span>
+      <span class="hero-h0 hide-on-mobile">UX/UI</span>
+      <span class="hero-h0 show-on-mobile" style="display:none">14+</span>
       <span class="hero-h1">Designer</span>
       <div class="st-skills-list">
         <span>UX Research · User Flows</span>
