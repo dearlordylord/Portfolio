@@ -350,7 +350,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 /* white strip — positioned by JS directly under photo bottom edge */
 #photo-strip { position: absolute; left: 0; right: 0; height: 4px; background: #fff; z-index: 15; pointer-events: none; top: 100%; }
 /* scroll hint */
-#scroll-hint { position: absolute; bottom: 2.5rem; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.5s; }
+#scroll-hint { position: absolute; bottom: 2.5rem; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.8s; pointer-events: none; }
 #scroll-hint.gone { opacity: 0; }
 .scroll-hint-label { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 .scroll-hint-arrow { width: 22px; height: 22px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); animation: arrowBounce 1.5s ease-in-out infinite; }
@@ -937,7 +937,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   function onScroll() {
     const prog = getScrollProg();
     progBar.style.width = (prog * 100) + '%';
-    if (prog > 0.04) hint.classList.add('gone');
+    // Hint stays visible all the way until About section is near
+    if (prog > 0.92) hint.classList.add('gone');
     else             hint.classList.remove('gone');
 
     // Smooth-snap to About when animation finishes (mobile & desktop)
@@ -1246,7 +1247,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.restore();
 
     // icon + label
-    var imgSize = Math.floor(r * 0.69);
+    var imgSize = Math.floor(r * 0.86);
     var lSize   = Math.max(9, Math.floor(r * 0.22));
     var gap     = Math.floor(r * 0.09);
     var totalH  = imgSize + gap + lSize;
