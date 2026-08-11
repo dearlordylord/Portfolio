@@ -139,6 +139,31 @@ section { position: relative; z-index: 1; }
 #skills .sw { text-align: center; }
 #skillcanvas { width: 100%; height: 520px; display: block; margin-top: 2rem; cursor: default; }
 
+/* TIMELINE */
+#timeline { background: #f5f5fa; }
+#timeline .sw { max-width: 860px; }
+.tl-track { position: relative; margin-top: 3.5rem; padding-bottom: 2rem; }
+.tl-spine { position: absolute; left: 148px; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: rgba(152,78,255,0.1); overflow: visible; }
+.tl-spine-fill { position: absolute; top: 0; left: 0; right: 0; height: 0; background: linear-gradient(to bottom, #eb0065, #984eff); }
+.tl-cursor { position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%); width: 14px; height: 14px; border-radius: 50%; background: #984eff; box-shadow: 0 0 0 4px rgba(152,78,255,0.18), 0 0 18px rgba(152,78,255,0.55); z-index: 3; }
+.tl-row { display: grid; grid-template-columns: 148px 1fr; gap: 0; padding: 2.4rem 0; border-bottom: 1px solid var(--gb); opacity: 0; transform: translateY(24px); transition: opacity 0.55s ease, transform 0.55s ease; }
+.tl-row.visible { opacity: 1; transform: translateY(0); }
+.tl-yr-col { padding-right: 2.5rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; position: relative; }
+.tl-yr { font-family: 'Syne', sans-serif; font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight: 800; background: linear-gradient(135deg, #eb0065, #984eff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.tl-yr-now { font-size: clamp(1rem, 2.5vw, 1.8rem); }
+.tl-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(152,78,255,0.35); border: 2px solid #984eff; position: absolute; right: -5px; top: 50%; transform: translateY(-50%); z-index: 2; }
+.tl-dot-now { background: #984eff; box-shadow: 0 0 0 3px rgba(152,78,255,0.25); width: 14px; height: 14px; right: -7px; }
+.tl-body { padding-left: 2rem; }
+.tl-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 1rem; color: var(--text); margin-bottom: 0.2rem; }
+.tl-sub { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.6rem; }
+.tl-p { font-size: 0.9rem; color: rgba(26,24,48,0.62); line-height: 1.7; margin-bottom: 0.6rem; }
+.tl-list { list-style: none; font-size: 0.875rem; color: rgba(26,24,48,0.7); line-height: 1.9; }
+.tl-list li::before { content: '·'; margin-right: 0.5rem; color: #984eff; }
+.tl-list-now li { font-size: 0.9rem; line-height: 1.8; }
+.tl-fork { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0 1.5rem; }
+.tl-fork-line { background: var(--gb); }
+.tl-fork-label { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
+
 /* CONTACT */
 #contact .sw { text-align: center; max-width: 780px; }
 .ccard { background: none; border: none; border-radius: 0; padding: 3.5rem 0; box-shadow: none; position: relative; overflow: visible; }
@@ -250,6 +275,15 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #photo-strip { z-index: 25 !important; }
   /* Case overlay full-width on small screens */
   #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
+  /* mobile: hide UX/UI, show 14+ instead */
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
+  /* timeline mobile */
+  .tl-row { grid-template-columns: 90px 1fr; }
+  .tl-spine { left: 90px; }
+  .tl-fork { grid-template-columns: 1fr; gap: 1rem 0; }
+  .tl-fork-line { display: none; }
+  .tl-body { padding-left: 1rem; }
 }
 </style>
 </head>
@@ -265,6 +299,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   <ul class="nav-links">
     <li><a href="#about">About</a></li>
     <li><a href="#projects">Work</a></li>
+    <li><a href="#timeline">Timeline</a></li>
     <li><a href="#skills">Skills</a></li>
     <li><a href="#contact" class="nav-cta">Contact</a></li>
   </ul>
@@ -290,7 +325,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
     <!-- overlay 1: left — UX/UI + skills -->
     <div class="st" id="st1">
-      <span class="hero-h0">UX/UI</span>
+      <span class="hero-h0 hide-on-mobile">UX/UI</span>
+      <span class="hero-h0 show-on-mobile" style="display:none">14+</span>
       <span class="hero-h1">Designer</span>
       <div class="st-skills-list">
         <span>UX Research · User Flows</span>
@@ -329,8 +365,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     <div>
       <span class="stag">About me</span>
       <h2 class="stitle">Fine arts roots,<br><em>product design</em> mind</h2>
-      <p class="atext">My design story began at 16 — taking on freelance work online, creating event posters and festival visuals while still in school. Real clients, real deadlines, and a crash course in composition, colour, and craft.</p>
-      <p class="atext">During my studies in Graphic Design I discovered the web — and UX/UI pulled me in completely. 7 years in graphic &amp; visual design, 7 years in UX/UI — 14 years of design in total. Dating apps, GameFi Telegram mini-apps, crypto platforms, and brand identities shipped along the way. Always thinking in systems, not just screens.</p>
+      <p class="atext">Started at 16 with freelance graphic design — posters, festivals, real clients. During my studies I discovered the web, and UX/UI pulled me in completely. 14 years of experience across different design disciplines. Always thinking in systems, not just screens.</p>
       <div style="display:flex;flex-direction:column;gap:0.65rem;margin-top:1.4rem;align-items:flex-start">
         <a href="https://be.net/RaDiza" target="_blank" class="btn btn-ghost" style="gap:0.6rem">
           <svg width="20" height="20" viewBox="0 0 112.196 112.196" style="flex-shrink:0;border-radius:50%;overflow:visible"><circle cx="56.098" cy="56.098" r="56.098" fill="#4176fa"/><path d="M76.209 46.341c-16.203 0-16.224 16.142-16.224 16.225 0 0-1.11 16.162 16.224 16.162 0 0 14.456.822 14.456-11.248h-7.423s.246 4.544-6.786 4.544c0 0-7.423.494-7.423-7.341h21.879s2.406-18.342-14.703-18.342M68.95 59.028s.905-6.498 7.424-6.498c6.539 0 6.436 6.498 6.436 6.498zm-18.546-4.153s6.436-.473 6.436-8.04c0-7.546-5.264-11.248-11.947-11.248H22.91v42.256h21.981s13.428.412 13.428-12.481c.001 0 .577-10.487-7.915-10.487M32.596 43.092h12.296s2.982 0 2.982 4.4-1.748 5.038-3.743 5.038H32.596zm11.68 27.246h-11.68v-11.31h12.296s4.463-.041 4.442 5.819c0 4.936-3.31 5.45-5.058 5.491M67.12 38.075v5.203h17.438v-5.203z" fill="#f1f2f2"/></svg>
@@ -347,15 +382,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
         <div class="lang-chip"><span class="lc-name">Russian</span><span class="lc-lvl">C2</span></div>
         <div class="lang-chip"><span class="lc-name">Ukrainian</span><span class="lc-lvl">C2</span></div>
         <div class="lang-chip"><span class="lc-name">French</span><span class="lc-lvl">A2</span></div>
-      </div>
-
-      <!-- Journey -->
-      <div class="tcard">
-        <h3>Journey</h3>
-        <div class="tl"><div class="tldot"></div><div><div class="tltext">Bachelor's — Graphic Design</div><div class="tlyear">2012–2016 · Graduated with Distinction</div></div></div>
-        <div class="tl"><div class="tldot p"></div><div><div class="tltext">Master's — Fine Arts & Decorative Art</div><div class="tlyear">2016–2018 · Graduated with Distinction</div></div></div>
-        <div class="tl"><div class="tldot b"></div><div><div class="tltext">UX/UI — Startups & Freelance</div><div class="tlyear">2019–present · Web & Mobile</div></div></div>
-        <div class="tl"><div class="tldot"></div><div><div class="tltext">Dating · Crypto · GameFi · Brand</div><div class="tlyear">6+ products shipped from zero</div></div></div>
       </div>
 
       <!-- Tools -->
@@ -447,6 +473,122 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
         <div class="pdesc">Full design support for a fashion label from polygraphy to web — brand identity, print, digital assets, and promotional materials.</div>
         <div class="pills"><span class="pill">Brand Identity</span><span class="pill">Print</span><span class="pill">Digital</span></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- TIMELINE -->
+<section id="timeline">
+  <div class="sw">
+    <span class="stag">Career path</span>
+    <h2 class="stitle">Years of<br><em>experience</em></h2>
+    <div class="tl-track">
+      <div class="tl-spine">
+        <div class="tl-spine-fill"></div>
+        <div class="tl-cursor"></div>
+      </div>
+
+      <!-- 2009 -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2009</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">First Freelance</div>
+          <div class="tl-sub">Graphic Design · City advertising</div>
+          <p class="tl-p">Started at 16 — citylights, event posters, festival visuals. Real clients, real deadlines.</p>
+          <ul class="tl-list">
+            <li>City advertising billboards</li>
+            <li>Photoshop · Illustrator</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 2012 fork -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2012</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-fork">
+            <div>
+              <div class="tl-fork-label">Education</div>
+              <div class="tl-title">Bachelor's — Fine Arts</div>
+              <div class="tl-sub">2012–2016 · Distinction</div>
+              <div class="tl-title" style="margin-top:0.8rem">Master's — Fine Arts</div>
+              <div class="tl-sub">2016–2018 · Distinction</div>
+            </div>
+            <div class="tl-fork-line"></div>
+            <div>
+              <div class="tl-fork-label">Meanwhile</div>
+              <div class="tl-title">8 Design Projects</div>
+              <div class="tl-sub">Graphic · Brand · Print</div>
+              <ul class="tl-list" style="margin-top:0.5rem">
+                <li>Festival visuals &amp; event posters</li>
+                <li>Brand identities</li>
+                <li>Print &amp; packaging</li>
+                <li>Social media assets</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2018 -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2018</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">ProKontekst · Graphic Designer</div>
+          <div class="tl-sub">Digital Advertising Agency</div>
+          <p class="tl-p">Designed contextual advertising for major automotive and beauty brands.</p>
+          <ul class="tl-list">
+            <li>Sephora — digital ad campaigns</li>
+            <li>Porsche · Lexus · Hyundai — landing pages</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 2019 -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2019</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">UX/UI Designer · Startups &amp; Freelance</div>
+          <div class="tl-sub">Web &amp; Mobile · Remote</div>
+          <p class="tl-p">Transitioned fully into product design — and never looked back.</p>
+          <ul class="tl-list">
+            <li>Dating platforms — full product design, 0 → launch</li>
+            <li>GameFi Telegram mini-apps — game UX, onboarding</li>
+            <li>Crypto platforms — web design, landing pages</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- NOW -->
+      <div class="tl-row tl-row-now" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr tl-yr-now">NOW</span>
+          <div class="tl-dot tl-dot-now"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">Senior UX/UI · Freelance</div>
+          <div class="tl-sub">14+ years · 6+ products shipped from zero</div>
+          <ul class="tl-list tl-list-now">
+            <li><strong>Word learning app</strong> — iOS, full UX/UI design (NDA)</li>
+            <li><strong>HoReCA platforms</strong> — product strategy, UX/UI consulting, AI photo &amp; video content generation for hospitality brands</li>
+          </ul>
+        </div>
+      </div>
+
     </div>
   </div>
 </section>
@@ -859,21 +1001,32 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   var ctx = canvas.getContext('2d');
 
   var SKILLS = [
-    { label: 'Figma',          icon: '🎨', r: 64 },
-    { label: 'UX Research',    icon: '📐', r: 60 },
-    { label: 'Prototyping',    icon: '⚡', r: 55 },
-    { label: 'Design Systems', icon: '🧩', r: 62 },
-    { label: 'User Testing',   icon: '👥', r: 52 },
-    { label: 'Motion Design',  icon: '🎬', r: 56 },
-    { label: 'AI Generation',  icon: '🤖', r: 58 },
-    { label: 'Photoshop',      icon: '🖼',  r: 50 },
-    { label: 'Illustrator',    icon: '✏️',  r: 48 },
-    { label: 'HTML & CSS',     icon: '💻', r: 44 },
-    { label: 'Webflow',        icon: '🌐', r: 42 },
-    { label: 'Miro',           icon: '📋', r: 44 },
-    { label: 'Branding',       icon: '💎', r: 52 },
-    { label: 'Typography',     icon: '🖌', r: 46 },
+    { label: 'Figma',          svg: 'icon/figma.svg',          r: 64 },
+    { label: 'UX Research',    svg: 'icon/ux-research.svg',    r: 60 },
+    { label: 'Prototyping',    svg: 'icon/Frame.svg',          r: 55 },
+    { label: 'Design Systems', svg: 'icon/design-systems.svg', r: 58 },
+    { label: 'User Testing',   svg: 'icon/user-testing.svg',   r: 52 },
+    { label: 'Motion Design',  svg: 'icon/motion-design.svg',  r: 56 },
+    { label: 'AI Generation',  svg: 'icon/ai-generation.svg',  r: 58 },
+    { label: 'Photoshop',      svg: 'icon/photoshop.svg',      r: 50 },
+    { label: 'Illustrator',    svg: 'icon/illustrator.svg',    r: 48 },
+    { label: 'InDesign',       svg: 'icon/InDesign.svg',       r: 48 },
+    { label: 'HTML & CSS',     svg: 'icon/html-css.svg',       r: 44 },
+    { label: 'Miro',           svg: 'icon/miro.svg',           r: 44 },
+    { label: 'Brainstorm',     svg: 'icon/brainstorm.svg',     r: 52 },
+    { label: 'Typography',     svg: 'icon/typography.svg',     r: 46 },
+    { label: 'UI Design',      svg: 'icon/ui.svg',             r: 54 },
   ];
+
+  // preload all SVG icons
+  var svgImages = {};
+  (function() {
+    SKILLS.forEach(function(sk) {
+      var img = new Image();
+      img.onload = function() { svgImages[sk.svg] = img; };
+      img.src = sk.svg;
+    });
+  })();
 
   var W, H, chips;
   var mouse = { x: -9999, y: -9999 };
@@ -889,6 +1042,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  var exploding = false;
+  var explodeStart = 0;
+  var EXPLODE_DUR = 1200;
+
   function init() {
     resize();
     var mob  = window.innerWidth <= 768;
@@ -896,21 +1053,26 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     var sc   = mob ? 0.65 : 1;
     var cols = Math.ceil(Math.sqrt(list.length * W / H));
     var rows = Math.ceil(list.length / cols);
+    var cx = W / 2, cy = H / 2;
     chips = list.map(function(sk, i) {
       var r   = Math.round(sk.r * sc);
       var col = i % cols, row = Math.floor(i / cols);
-      var x   = (col + 0.5 + (Math.random()-0.5)*0.5) * (W / cols);
-      var y   = (row + 0.5 + (Math.random()-0.5)*0.5) * (H / rows);
-      var ang = Math.random() * Math.PI * 2;
-      var spd = 0.8 + Math.random() * 1.4;
+      var tx  = (col + 0.5 + (Math.random()-0.5)*0.5) * (W / cols);
+      var ty  = (row + 0.5 + (Math.random()-0.5)*0.5) * (H / rows);
+      tx = Math.max(r, Math.min(W-r, tx));
+      ty = Math.max(r, Math.min(H-r, ty));
+      var dx = tx - cx, dy = ty - cy;
+      var dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      var spd  = 5 + Math.random() * 4;
       return {
-        label: sk.label, icon: sk.icon, r: r,
-        x: Math.max(r, Math.min(W-r, x)),
-        y: Math.max(r, Math.min(H-r, y)),
-        vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
+        label: sk.label, svg: sk.svg, r: r,
+        x: cx, y: cy,
+        vx: dx/dist * spd, vy: dy/dist * spd,
         get mass() { return this.r * this.r; }
       };
     });
+    exploding = true;
+    explodeStart = performance.now();
   }
 
   function drawChip(c) {
@@ -957,19 +1119,21 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.restore();
 
     // icon + label
-    var iSize  = Math.floor(r * 0.50);
-    var lSize  = Math.max(9, Math.floor(r * 0.22));
-    var gap    = Math.floor(r * 0.07);
-    var totalH = iSize * 0.72 + gap + lSize;
-    var iY     = y - totalH / 2 + iSize * 0.36;
-    var lY     = iY + iSize * 0.36 + gap + lSize * 0.5;
+    var imgSize = Math.floor(r * 0.69);
+    var lSize   = Math.max(9, Math.floor(r * 0.22));
+    var gap     = Math.floor(r * 0.09);
+    var totalH  = imgSize + gap + lSize;
+    var iTop    = y - totalH / 2;
+    var lCy     = iTop + imgSize + gap + lSize * 0.5;
     ctx.save();
+    var img = svgImages[c.svg];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, x - imgSize / 2, iTop, imgSize, imgSize);
+    }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = iSize + 'px sans-serif';
-    ctx.fillText(c.icon, x, iY);
     ctx.font = '600 ' + lSize + 'px Syne,system-ui,sans-serif';
-    ctx.fillStyle = 'rgba(12,5,28,0.72)';
-    ctx.fillText(c.label, x, lY);
+    ctx.fillStyle = 'rgba(12,5,28,0.78)';
+    ctx.fillText(c.label, x, lCy);
     ctx.restore();
   }
 
@@ -985,37 +1149,33 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     b.vx -= imp*a.mass*nx; b.vy -= imp*a.mass*ny;
   }
 
-  function loop() {
+  function loop(now) {
     if (!chips || !W) { requestAnimationFrame(loop); return; }
     ctx.clearRect(0, 0, W, H);
-
+    if (exploding && now - explodeStart > EXPLODE_DUR) exploding = false;
     chips.forEach(function(c) {
-      // gentle gravity
-      c.vy += 0.01;
-      // subtle random drift
-      c.vx += (Math.random()-0.5)*0.01;
-      c.vy += (Math.random()-0.5)*0.01;
-      // mouse repulsion
-      var dx = c.x-mouse.x, dy = c.y-mouse.y, d = Math.sqrt(dx*dx+dy*dy);
-      var range = c.r * 4.2;
-      if (d < range && d > 1) { var f=(1-d/range)*3.8; c.vx+=dx/d*f; c.vy+=dy/d*f; }
-      // damping
-      c.vx *= 0.976; c.vy *= 0.976;
-      // speed cap
+      if (!exploding) {
+        c.vy += 0.01;
+        c.vx += (Math.random()-0.5)*0.01;
+        c.vy += (Math.random()-0.5)*0.01;
+        var dx = c.x-mouse.x, dy = c.y-mouse.y, d = Math.sqrt(dx*dx+dy*dy);
+        var range = c.r * 4.2;
+        if (d < range && d > 1) { var f=(1-d/range)*3.8; c.vx+=dx/d*f; c.vy+=dy/d*f; }
+      }
+      var damp = exploding ? 0.94 : 0.976;
+      c.vx *= damp; c.vy *= damp;
       var spd = Math.sqrt(c.vx*c.vx+c.vy*c.vy);
-      if (spd > 5) { c.vx *= 5/spd; c.vy *= 5/spd; }
+      var cap = exploding ? 12 : 5;
+      if (spd > cap) { c.vx *= cap/spd; c.vy *= cap/spd; }
       c.x += c.vx; c.y += c.vy;
-      // walls
       if (c.x-c.r<0){c.x=c.r; c.vx=Math.abs(c.vx)*0.72;}
       if (c.x+c.r>W){c.x=W-c.r; c.vx=-Math.abs(c.vx)*0.72;}
       if (c.y-c.r<0){c.y=c.r; c.vy=Math.abs(c.vy)*0.72;}
       if (c.y+c.r>H){c.y=H-c.r; c.vy=-Math.abs(c.vy)*0.72;}
     });
-
     for (var i=0; i<chips.length; i++)
       for (var j=i+1; j<chips.length; j++)
         resolveCollision(chips[i], chips[j]);
-
     chips.forEach(drawChip);
     requestAnimationFrame(loop);
   }
@@ -1029,14 +1189,52 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     mouse.x=e.touches[0].clientX-r.left; mouse.y=e.touches[0].clientY-r.top;
   }, { passive: false });
   canvas.addEventListener('touchend', function() { mouse.x=-9999; mouse.y=-9999; });
-  window.addEventListener('resize', function() { init(); });
+  window.addEventListener('resize', function() { resize(); });
 
-  requestAnimationFrame(function() { init(); loop(); });
+  var started = false;
+  var skillsObs = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting && !started) {
+      started = true;
+      init();
+      requestAnimationFrame(loop);
+    }
+  }, { threshold: 0.1 });
+  skillsObs.observe(canvas);
 })();
 
 // ═══════════════════════════════════════
 //   SCROLL FADE-IN
 // ═══════════════════════════════════════
+// ═══════════════════════════════════════
+//   TIMELINE SCROLL ANIMATION
+// ═══════════════════════════════════════
+(function() {
+  var section = document.getElementById('timeline');
+  if (!section) return;
+  var fill   = section.querySelector('.tl-spine-fill');
+  var cursor = section.querySelector('.tl-cursor');
+  var rows   = Array.prototype.slice.call(section.querySelectorAll('.tl-row'));
+  var spine  = section.querySelector('.tl-spine');
+  function update() {
+    if (!spine) return;
+    var sr = spine.getBoundingClientRect();
+    var vh = window.innerHeight;
+    var trigger = vh * 0.65;
+    var prog = sr.height > 0 ? Math.max(0, Math.min(1, (trigger - sr.top) / sr.height)) : 0;
+    var px = (prog * sr.height).toFixed(1) + 'px';
+    if (fill)   { fill.style.height = px; }
+    if (cursor) { cursor.style.top  = px; }
+    rows.forEach(function(row) {
+      if (row.getBoundingClientRect().top < vh * 0.82) {
+        row.classList.add('visible');
+      }
+    });
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update, { passive: true });
+  setTimeout(update, 100);
+})();
+
 const io = new IntersectionObserver(entries => {
   entries.forEach(e => {
     if (e.isIntersecting) { e.target.style.opacity='1'; e.target.style.transform='translateY(0)'; }
