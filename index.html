@@ -1123,21 +1123,32 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   var ctx = canvas.getContext('2d');
 
   var SKILLS = [
-    { label: 'Figma',          icon: '🎨', r: 64 },
-    { label: 'UX Research',    icon: '📐', r: 60 },
-    { label: 'Prototyping',    icon: '⚡', r: 55 },
-    { label: 'Design Systems', icon: '🧩', r: 62 },
-    { label: 'User Testing',   icon: '👥', r: 52 },
-    { label: 'Motion Design',  icon: '🎬', r: 56 },
-    { label: 'AI Generation',  icon: '🤖', r: 58 },
-    { label: 'Photoshop',      icon: '🖼',  r: 50 },
-    { label: 'Illustrator',    icon: '✏️',  r: 48 },
-    { label: 'HTML & CSS',     icon: '💻', r: 44 },
-    { label: 'Webflow',        icon: '🌐', r: 42 },
-    { label: 'Miro',           icon: '📋', r: 44 },
-    { label: 'Branding',       icon: '💎', r: 52 },
-    { label: 'Typography',     icon: '🖌', r: 46 },
+    { label: 'Figma',          svg: 'icon/figma.svg',          r: 64 },
+    { label: 'UX Research',    svg: 'icon/ux-research.svg',    r: 60 },
+    { label: 'Prototyping',    svg: 'icon/Frame.svg',          r: 55 },
+    { label: 'Design Systems', svg: 'icon/design-systems.svg', r: 58 },
+    { label: 'User Testing',   svg: 'icon/user-testing.svg',   r: 52 },
+    { label: 'Motion Design',  svg: 'icon/motion-design.svg',  r: 56 },
+    { label: 'AI Generation',  svg: 'icon/ai-generation.svg',  r: 58 },
+    { label: 'Photoshop',      svg: 'icon/photoshop.svg',      r: 50 },
+    { label: 'Illustrator',    svg: 'icon/illustrator.svg',    r: 48 },
+    { label: 'InDesign',       svg: 'icon/InDesign.svg',       r: 48 },
+    { label: 'HTML & CSS',     svg: 'icon/html-css.svg',       r: 44 },
+    { label: 'Miro',           svg: 'icon/miro.svg',           r: 44 },
+    { label: 'Brainstorm',     svg: 'icon/brainstorm.svg',     r: 52 },
+    { label: 'Typography',     svg: 'icon/typography.svg',     r: 46 },
+    { label: 'UI Design',      svg: 'icon/ui.svg',             r: 54 },
   ];
+
+  // preload all SVG icons
+  var svgImages = {};
+  (function() {
+    SKILLS.forEach(function(sk) {
+      var img = new Image();
+      img.onload = function() { svgImages[sk.svg] = img; };
+      img.src = sk.svg;
+    });
+  })();
 
   var W, H, chips;
   var mouse = { x: -9999, y: -9999 };
@@ -1177,7 +1188,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       var dist = Math.sqrt(dx*dx + dy*dy) || 1;
       var spd  = 5 + Math.random() * 4;
       return {
-        label: sk.label, icon: sk.icon, r: r,
+        label: sk.label, svg: sk.svg, r: r,
         x: cx, y: cy,                         // start at center
         vx: dx/dist * spd, vy: dy/dist * spd, // burst outward
         get mass() { return this.r * this.r; }
@@ -1231,19 +1242,21 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.restore();
 
     // icon + label
-    var iSize  = Math.floor(r * 0.50);
-    var lSize  = Math.max(9, Math.floor(r * 0.22));
-    var gap    = Math.floor(r * 0.07);
-    var totalH = iSize * 0.72 + gap + lSize;
-    var iY     = y - totalH / 2 + iSize * 0.36;
-    var lY     = iY + iSize * 0.36 + gap + lSize * 0.5;
+    var imgSize = Math.floor(r * 0.69);
+    var lSize   = Math.max(9, Math.floor(r * 0.22));
+    var gap     = Math.floor(r * 0.09);
+    var totalH  = imgSize + gap + lSize;
+    var iTop    = y - totalH / 2;
+    var lCy     = iTop + imgSize + gap + lSize * 0.5;
     ctx.save();
+    var img = svgImages[c.svg];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, x - imgSize / 2, iTop, imgSize, imgSize);
+    }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = iSize + 'px sans-serif';
-    ctx.fillText(c.icon, x, iY);
     ctx.font = '600 ' + lSize + 'px Syne,system-ui,sans-serif';
-    ctx.fillStyle = 'rgba(12,5,28,0.72)';
-    ctx.fillText(c.label, x, lY);
+    ctx.fillStyle = 'rgba(12,5,28,0.78)';
+    ctx.fillText(c.label, x, lCy);
     ctx.restore();
   }
 
