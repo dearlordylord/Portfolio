@@ -118,6 +118,162 @@ section { position: relative; z-index: 1; }
 @media(max-width:600px)  { .case-grid { grid-template-columns: 1fr; } }
 @media(max-width:900px)  { #case-overlay-inner { padding: 5rem 0 4rem; } }
 
+/* TIMELINE */
+#timeline .tl-sw { max-width: 860px; }
+.tl-track { position: relative; margin-top: 3.5rem; padding-bottom: 2rem; }
+
+/* vertical spine */
+.tl-spine {
+  position: absolute;
+  left: 148px;
+  top: 0; bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  background: rgba(152,78,255,0.1);
+  overflow: visible;
+}
+.tl-spine-fill {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 0;
+  background: linear-gradient(to bottom, #eb0065, #984eff);
+}
+.tl-cursor {
+  position: absolute;
+  left: 50%; top: 0;
+  transform: translate(-50%, -50%);
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #984eff;
+  box-shadow: 0 0 0 4px rgba(152,78,255,0.18), 0 0 18px rgba(152,78,255,0.55);
+  z-index: 3;
+}
+
+/* each row */
+.tl-row {
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 0;
+  padding: 2.4rem 0;
+  border-bottom: 1px solid var(--gb);
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.tl-row:last-child { border-bottom: none; }
+.tl-row.visible { opacity: 1; transform: translateY(0); }
+
+/* year column */
+.tl-yr-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-right: 28px;
+  padding-top: 3px;
+  position: relative;
+  gap: 8px;
+}
+.tl-yr {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1;
+  background: linear-gradient(135deg, #eb0065, #984eff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+.tl-yr em { font-style: normal; font-size: 0.6em; opacity: 0.7; }
+.tl-yr-now { font-size: clamp(1.3rem, 2.5vw, 1.9rem); }
+.tl-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(152,78,255,0.5);
+  position: absolute;
+  right: -4px; top: 8px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.tl-row.visible .tl-dot { opacity: 1; }
+.tl-dot-now {
+  width: 10px; height: 10px;
+  right: -5px; top: 6px;
+  background: linear-gradient(135deg, #eb0065, #984eff);
+  border: none;
+}
+
+/* content */
+.tl-body { padding-left: 28px; padding-right: 1rem; }
+.tl-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 1rem; font-weight: 700;
+  color: var(--text); line-height: 1.2;
+}
+.tl-sub {
+  font-size: 0.78rem; color: var(--muted);
+  margin-top: 0.2rem; font-weight: 500;
+}
+.tl-p {
+  font-size: 0.875rem; color: var(--muted);
+  line-height: 1.65; margin: 0.7rem 0 0;
+}
+.tl-list {
+  list-style: none; padding: 0; margin: 0.75rem 0 0;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.tl-list li {
+  font-size: 0.825rem; color: var(--muted); line-height: 1.5;
+  padding-left: 1rem; position: relative;
+}
+.tl-list li::before {
+  content: '·';
+  position: absolute; left: 0;
+  color: rgba(152,78,255,0.5);
+}
+.tl-list-now li { font-size: 0.875rem; }
+.tl-list-now li strong { color: var(--text); }
+
+/* fork block (parallel branches) */
+.tl-fork {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  gap: 0 1.5rem;
+  padding-left: 28px;
+}
+.tl-branch-divider {
+  width: 1px;
+  background: var(--gb);
+  margin: 4px 0;
+}
+.tl-branch { padding: 0; }
+.tl-branch-tag {
+  display: inline-block;
+  font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: rgba(152,78,255,0.7);
+  margin-bottom: 0.6rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid rgba(152,78,255,0.2);
+  border-radius: 100px;
+}
+
+/* now row highlight */
+.tl-row-now .tl-body {
+  padding-left: 28px;
+}
+
+/* mobile */
+@media (max-width: 600px) {
+  .tl-spine { left: 56px; }
+  .tl-row { grid-template-columns: 56px 1fr; }
+  .tl-yr { font-size: 1.1rem; }
+  .tl-yr-col { padding-right: 16px; }
+  .tl-body { padding-left: 16px; }
+  .tl-fork { grid-template-columns: 1fr; gap: 1.2rem 0; }
+  .tl-branch-divider { display: none; }
+  .tl-row-now .tl-body { padding-left: 16px; }
+}
+
 /* PROJECTS */
 .pgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
 .pcard { background: linear-gradient(135deg, rgba(255,255,255,0.4), rgba(255,255,255,0.2)); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: none; border-radius: var(--r); padding: 2rem; box-shadow: inset 0 0 0 1px rgba(255,255,255,1), 0 2px 20px rgba(120,100,180,0.08); transition: all 0.3s; position: relative; overflow: hidden; }
@@ -138,31 +294,6 @@ section { position: relative; z-index: 1; }
 /* SKILLS */
 #skills .sw { text-align: center; }
 #skillcanvas { width: 100%; height: 520px; display: block; margin-top: 2rem; cursor: default; }
-
-/* TIMELINE */
-#timeline { background: #f5f5fa; }
-#timeline .sw { max-width: 860px; }
-.tl-track { position: relative; margin-top: 3.5rem; padding-bottom: 2rem; }
-.tl-spine { position: absolute; left: 148px; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: rgba(152,78,255,0.1); overflow: visible; }
-.tl-spine-fill { position: absolute; top: 0; left: 0; right: 0; height: 0; background: linear-gradient(to bottom, #eb0065, #984eff); }
-.tl-cursor { position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%); width: 14px; height: 14px; border-radius: 50%; background: #984eff; box-shadow: 0 0 0 4px rgba(152,78,255,0.18), 0 0 18px rgba(152,78,255,0.55); z-index: 3; }
-.tl-row { display: grid; grid-template-columns: 148px 1fr; gap: 0; padding: 2.4rem 0; border-bottom: 1px solid var(--gb); opacity: 0; transform: translateY(24px); transition: opacity 0.55s ease, transform 0.55s ease; }
-.tl-row.visible { opacity: 1; transform: translateY(0); }
-.tl-yr-col { padding-right: 2.5rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; position: relative; }
-.tl-yr { font-family: 'Syne', sans-serif; font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight: 800; background: linear-gradient(135deg, #eb0065, #984eff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.tl-yr-now { font-size: clamp(1rem, 2.5vw, 1.8rem); }
-.tl-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(152,78,255,0.35); border: 2px solid #984eff; position: absolute; right: -5px; top: 50%; transform: translateY(-50%); z-index: 2; }
-.tl-dot-now { background: #984eff; box-shadow: 0 0 0 3px rgba(152,78,255,0.25); width: 14px; height: 14px; right: -7px; }
-.tl-body { padding-left: 2rem; }
-.tl-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 1rem; color: var(--text); margin-bottom: 0.2rem; }
-.tl-sub { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.6rem; }
-.tl-p { font-size: 0.9rem; color: rgba(26,24,48,0.62); line-height: 1.7; margin-bottom: 0.6rem; }
-.tl-list { list-style: none; font-size: 0.875rem; color: rgba(26,24,48,0.7); line-height: 1.9; }
-.tl-list li::before { content: '·'; margin-right: 0.5rem; color: #984eff; }
-.tl-list-now li { font-size: 0.9rem; line-height: 1.8; }
-.tl-fork { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0 1.5rem; }
-.tl-fork-line { background: var(--gb); }
-.tl-fork-label { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
 
 /* CONTACT */
 #contact .sw { text-align: center; max-width: 780px; }
@@ -261,6 +392,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     font-size: clamp(2.8rem, 17vw, 5.5rem) !important;
     white-space: normal !important; line-height: 0.88 !important;
   }
+  /* mobile: hide UX/UI, show 14+ instead */
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
   /* H1: Designer · years */
   .hero-h1, .role-sub, .years-word {
     font-size: clamp(2rem, 13vw, 4rem) !important;
@@ -275,15 +409,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #photo-strip { z-index: 25 !important; }
   /* Case overlay full-width on small screens */
   #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
-  /* mobile: hide UX/UI, show 14+ instead */
-  .hide-on-mobile { display: none !important; }
-  .show-on-mobile { display: block !important; }
-  /* timeline mobile */
-  .tl-row { grid-template-columns: 90px 1fr; }
-  .tl-spine { left: 90px; }
-  .tl-fork { grid-template-columns: 1fr; gap: 1rem 0; }
-  .tl-fork-line { display: none; }
-  .tl-body { padding-left: 1rem; }
 }
 </style>
 </head>
@@ -299,7 +424,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   <ul class="nav-links">
     <li><a href="#about">About</a></li>
     <li><a href="#projects">Work</a></li>
-    <li><a href="#timeline">Timeline</a></li>
     <li><a href="#skills">Skills</a></li>
     <li><a href="#contact" class="nav-cta">Contact</a></li>
   </ul>
@@ -401,6 +525,124 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
 <div class="divider"></div>
 
+<!-- TIMELINE -->
+<section id="timeline">
+  <div class="sw tl-sw">
+    <span class="stag">Experience</span>
+    <h2 class="stitle">The journey</h2>
+    <div class="tl-track">
+      <div class="tl-spine">
+        <div class="tl-spine-fill"></div>
+        <div class="tl-cursor"></div>
+      </div>
+
+      <!-- 2009 -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2009</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">First freelance projects</div>
+          <div class="tl-sub">Graphic Design · PS & Illustrator</div>
+          <p class="tl-p">Started at 16 — city advertising, citylights and billboards. Real clients, real deadlines, and a crash course in composition, colour, and craft.</p>
+        </div>
+      </div>
+
+      <!-- 2012–2018 fork -->
+      <div class="tl-row tl-row-fork" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2012</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body tl-fork">
+          <div class="tl-branch">
+            <div class="tl-branch-tag">Education</div>
+            <div class="tl-title">Bachelor's · Graphic Design</div>
+            <div class="tl-sub">2012–2016 · Graduated with Distinction</div>
+            <div class="tl-title" style="margin-top:1.1rem">Master's · Fine Arts</div>
+            <div class="tl-sub">2016–2018 · Graduated with Distinction</div>
+          </div>
+          <div class="tl-branch-divider"></div>
+          <div class="tl-branch">
+            <div class="tl-branch-tag">Meanwhile</div>
+            <div class="tl-title">Graphic Designer · Freelance</div>
+            <div class="tl-sub">Advertising · Print · Branding · Events</div>
+            <ul class="tl-list">
+              <li>City Festival of Colors</li>
+              <li>International MMA Tournament 2017</li>
+              <li>Red Fashion Week</li>
+              <li>Children's ice-arena shows, Mytishchi</li>
+              <li>Book covers — "Nightmare on Mudrologov St.", "Wisdom That's NOT", "Triumph of Power"</li>
+              <li>AMD branding — Association of Fashion & Design, Crimea</li>
+              <li>Miel real-estate advertising</li>
+              <li>Event agency Cadence Show</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ProKontekst -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2018</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">ProKontekst · Digital Agency</div>
+          <div class="tl-sub">Performance Marketing & Landing Pages</div>
+          <ul class="tl-list">
+            <li>Context advertising for Sephora — Russian market</li>
+            <li>Sales landing pages for Porsche, Lexus and Hyundai dealerships</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- UX/UI Startups -->
+      <div class="tl-row" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr">2019</span>
+          <div class="tl-dot"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">UX/UI Designer · Startups & Freelance</div>
+          <div class="tl-sub">Web & Mobile · Remote</div>
+          <p class="tl-p">Transitioned fully into product design — and never looked back.</p>
+          <ul class="tl-list">
+            <li>Dating platforms — full product design, 0 → launch</li>
+            <li>GameFi Telegram mini-apps</li>
+            <li>Crypto & DeFi platforms</li>
+            <li>Brand identities and design systems</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- NOW -->
+      <div class="tl-row tl-row-now" data-tl>
+        <div class="tl-yr-col">
+          <span class="tl-yr tl-yr-now">NOW</span>
+          <div class="tl-dot tl-dot-now"></div>
+        </div>
+        <div class="tl-body">
+          <div class="tl-title">Senior UX/UI · Freelance</div>
+          <div class="tl-sub">14+ years · 6+ products shipped from zero</div>
+          <ul class="tl-list tl-list-now">
+            <li>
+              <strong>Word learning app</strong> — iOS, full UX/UI design (NDA)
+            </li>
+            <li>
+              <strong>HoReCA platforms</strong> — product strategy, UX/UI consulting, AI photo &amp; video content generation for hospitality brands
+            </li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
 <!-- PROJECTS -->
 <section id="projects">
   <div class="sw">
@@ -473,122 +715,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
         <div class="pdesc">Full design support for a fashion label from polygraphy to web — brand identity, print, digital assets, and promotional materials.</div>
         <div class="pills"><span class="pill">Brand Identity</span><span class="pill">Print</span><span class="pill">Digital</span></div>
       </div>
-    </div>
-  </div>
-</section>
-
-<div class="divider"></div>
-
-<!-- TIMELINE -->
-<section id="timeline">
-  <div class="sw">
-    <span class="stag">Career path</span>
-    <h2 class="stitle">Years of<br><em>experience</em></h2>
-    <div class="tl-track">
-      <div class="tl-spine">
-        <div class="tl-spine-fill"></div>
-        <div class="tl-cursor"></div>
-      </div>
-
-      <!-- 2009 -->
-      <div class="tl-row" data-tl>
-        <div class="tl-yr-col">
-          <span class="tl-yr">2009</span>
-          <div class="tl-dot"></div>
-        </div>
-        <div class="tl-body">
-          <div class="tl-title">First Freelance</div>
-          <div class="tl-sub">Graphic Design · City advertising</div>
-          <p class="tl-p">Started at 16 — citylights, event posters, festival visuals. Real clients, real deadlines.</p>
-          <ul class="tl-list">
-            <li>City advertising billboards</li>
-            <li>Photoshop · Illustrator</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- 2012 fork -->
-      <div class="tl-row" data-tl>
-        <div class="tl-yr-col">
-          <span class="tl-yr">2012</span>
-          <div class="tl-dot"></div>
-        </div>
-        <div class="tl-body">
-          <div class="tl-fork">
-            <div>
-              <div class="tl-fork-label">Education</div>
-              <div class="tl-title">Bachelor's — Fine Arts</div>
-              <div class="tl-sub">2012–2016 · Distinction</div>
-              <div class="tl-title" style="margin-top:0.8rem">Master's — Fine Arts</div>
-              <div class="tl-sub">2016–2018 · Distinction</div>
-            </div>
-            <div class="tl-fork-line"></div>
-            <div>
-              <div class="tl-fork-label">Meanwhile</div>
-              <div class="tl-title">8 Design Projects</div>
-              <div class="tl-sub">Graphic · Brand · Print</div>
-              <ul class="tl-list" style="margin-top:0.5rem">
-                <li>Festival visuals &amp; event posters</li>
-                <li>Brand identities</li>
-                <li>Print &amp; packaging</li>
-                <li>Social media assets</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 2018 -->
-      <div class="tl-row" data-tl>
-        <div class="tl-yr-col">
-          <span class="tl-yr">2018</span>
-          <div class="tl-dot"></div>
-        </div>
-        <div class="tl-body">
-          <div class="tl-title">ProKontekst · Graphic Designer</div>
-          <div class="tl-sub">Digital Advertising Agency</div>
-          <p class="tl-p">Designed contextual advertising for major automotive and beauty brands.</p>
-          <ul class="tl-list">
-            <li>Sephora — digital ad campaigns</li>
-            <li>Porsche · Lexus · Hyundai — landing pages</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- 2019 -->
-      <div class="tl-row" data-tl>
-        <div class="tl-yr-col">
-          <span class="tl-yr">2019</span>
-          <div class="tl-dot"></div>
-        </div>
-        <div class="tl-body">
-          <div class="tl-title">UX/UI Designer · Startups &amp; Freelance</div>
-          <div class="tl-sub">Web &amp; Mobile · Remote</div>
-          <p class="tl-p">Transitioned fully into product design — and never looked back.</p>
-          <ul class="tl-list">
-            <li>Dating platforms — full product design, 0 → launch</li>
-            <li>GameFi Telegram mini-apps — game UX, onboarding</li>
-            <li>Crypto platforms — web design, landing pages</li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- NOW -->
-      <div class="tl-row tl-row-now" data-tl>
-        <div class="tl-yr-col">
-          <span class="tl-yr tl-yr-now">NOW</span>
-          <div class="tl-dot tl-dot-now"></div>
-        </div>
-        <div class="tl-body">
-          <div class="tl-title">Senior UX/UI · Freelance</div>
-          <div class="tl-sub">14+ years · 6+ products shipped from zero</div>
-          <ul class="tl-list tl-list-now">
-            <li><strong>Word learning app</strong> — iOS, full UX/UI design (NDA)</li>
-            <li><strong>HoReCA platforms</strong> — product strategy, UX/UI consulting, AI photo &amp; video content generation for hospitality brands</li>
-          </ul>
-        </div>
-      </div>
-
     </div>
   </div>
 </section>
@@ -1044,7 +1170,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   var exploding = false;
   var explodeStart = 0;
-  var EXPLODE_DUR = 1200;
+  var EXPLODE_DUR = 1200; // ms for explosion phase
 
   function init() {
     resize();
@@ -1061,13 +1187,14 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       var ty  = (row + 0.5 + (Math.random()-0.5)*0.5) * (H / rows);
       tx = Math.max(r, Math.min(W-r, tx));
       ty = Math.max(r, Math.min(H-r, ty));
+      // direction from center to target
       var dx = tx - cx, dy = ty - cy;
       var dist = Math.sqrt(dx*dx + dy*dy) || 1;
       var spd  = 5 + Math.random() * 4;
       return {
         label: sk.label, svg: sk.svg, r: r,
-        x: cx, y: cy,
-        vx: dx/dist * spd, vy: dy/dist * spd,
+        x: cx, y: cy,                         // start at center
+        vx: dx/dist * spd, vy: dy/dist * spd, // burst outward
         get mass() { return this.r * this.r; }
       };
     });
@@ -1152,30 +1279,40 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   function loop(now) {
     if (!chips || !W) { requestAnimationFrame(loop); return; }
     ctx.clearRect(0, 0, W, H);
+
+    // after explosion phase ends, switch to normal physics
     if (exploding && now - explodeStart > EXPLODE_DUR) exploding = false;
+
     chips.forEach(function(c) {
       if (!exploding) {
+        // normal: gentle gravity + drift
         c.vy += 0.01;
         c.vx += (Math.random()-0.5)*0.01;
         c.vy += (Math.random()-0.5)*0.01;
+        // mouse repulsion
         var dx = c.x-mouse.x, dy = c.y-mouse.y, d = Math.sqrt(dx*dx+dy*dy);
         var range = c.r * 4.2;
         if (d < range && d > 1) { var f=(1-d/range)*3.8; c.vx+=dx/d*f; c.vy+=dy/d*f; }
       }
+      // damping — stronger during explosion so chips settle faster
       var damp = exploding ? 0.94 : 0.976;
       c.vx *= damp; c.vy *= damp;
+      // speed cap
       var spd = Math.sqrt(c.vx*c.vx+c.vy*c.vy);
       var cap = exploding ? 12 : 5;
       if (spd > cap) { c.vx *= cap/spd; c.vy *= cap/spd; }
       c.x += c.vx; c.y += c.vy;
+      // walls
       if (c.x-c.r<0){c.x=c.r; c.vx=Math.abs(c.vx)*0.72;}
       if (c.x+c.r>W){c.x=W-c.r; c.vx=-Math.abs(c.vx)*0.72;}
       if (c.y-c.r<0){c.y=c.r; c.vy=Math.abs(c.vy)*0.72;}
       if (c.y+c.r>H){c.y=H-c.r; c.vy=-Math.abs(c.vy)*0.72;}
     });
+
     for (var i=0; i<chips.length; i++)
       for (var j=i+1; j<chips.length; j++)
         resolveCollision(chips[i], chips[j]);
+
     chips.forEach(drawChip);
     requestAnimationFrame(loop);
   }
@@ -1191,6 +1328,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   canvas.addEventListener('touchend', function() { mouse.x=-9999; mouse.y=-9999; });
   window.addEventListener('resize', function() { resize(); });
 
+  // start only when section scrolls into view
   var started = false;
   var skillsObs = new IntersectionObserver(function(entries) {
     if (entries[0].isIntersecting && !started) {
@@ -1205,36 +1343,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 // ═══════════════════════════════════════
 //   SCROLL FADE-IN
 // ═══════════════════════════════════════
-// ═══════════════════════════════════════
-//   TIMELINE SCROLL ANIMATION
-// ═══════════════════════════════════════
-(function() {
-  var section = document.getElementById('timeline');
-  if (!section) return;
-  var fill   = section.querySelector('.tl-spine-fill');
-  var cursor = section.querySelector('.tl-cursor');
-  var rows   = Array.prototype.slice.call(section.querySelectorAll('.tl-row'));
-  var spine  = section.querySelector('.tl-spine');
-  function update() {
-    if (!spine) return;
-    var sr = spine.getBoundingClientRect();
-    var vh = window.innerHeight;
-    var trigger = vh * 0.65;
-    var prog = sr.height > 0 ? Math.max(0, Math.min(1, (trigger - sr.top) / sr.height)) : 0;
-    var px = (prog * sr.height).toFixed(1) + 'px';
-    if (fill)   { fill.style.height = px; }
-    if (cursor) { cursor.style.top  = px; }
-    rows.forEach(function(row) {
-      if (row.getBoundingClientRect().top < vh * 0.82) {
-        row.classList.add('visible');
-      }
-    });
-  }
-  window.addEventListener('scroll', update, { passive: true });
-  window.addEventListener('resize', update, { passive: true });
-  setTimeout(update, 100);
-})();
-
 const io = new IntersectionObserver(entries => {
   entries.forEach(e => {
     if (e.isIntersecting) { e.target.style.opacity='1'; e.target.style.transform='translateY(0)'; }
@@ -1245,6 +1353,43 @@ document.querySelectorAll('.pcard,.tcard,.case-card').forEach(el => {
   el.style.transition='opacity 0.55s ease,transform 0.55s ease';
   io.observe(el);
 });
+
+// Timeline — scroll-driven line + row reveal
+(function() {
+  var section = document.getElementById('timeline');
+  if (!section) return;
+  var fill   = section.querySelector('.tl-spine-fill');
+  var cursor = section.querySelector('.tl-cursor');
+  var rows   = Array.prototype.slice.call(section.querySelectorAll('.tl-row'));
+  var spine  = section.querySelector('.tl-spine');
+
+  function update() {
+    if (!spine) return;
+    var sr = spine.getBoundingClientRect();
+    var vh = window.innerHeight;
+
+    // trigger line at 65% from top of viewport
+    var trigger = vh * 0.65;
+    // how far down the spine the trigger has traveled: 0..1
+    var prog = sr.height > 0 ? Math.max(0, Math.min(1, (trigger - sr.top) / sr.height)) : 0;
+    var px = (prog * sr.height).toFixed(1) + 'px';
+
+    if (fill)   { fill.style.height = px; }
+    if (cursor) { cursor.style.top  = px; }
+
+    // reveal each row when it enters viewport
+    rows.forEach(function(row) {
+      if (row.getBoundingClientRect().top < vh * 0.82) {
+        row.classList.add('visible');
+      }
+    });
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update,  { passive: true });
+  // small delay so layout is fully rendered
+  setTimeout(update, 100);
+})();
 
 
 </script>
