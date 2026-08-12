@@ -373,10 +373,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* st1: top-left, appears during phase 1 animation */
+  /* st1: top-left, visible immediately above photo */
   #st1 {
     left: 6% !important; right: auto !important;
-    top: 8vh !important; transform: none !important;
+    top: 12vh !important; transform: none !important;
     max-width: 88% !important; width: 88% !important;
     text-align: left !important;
   }
@@ -819,7 +819,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.49 : 0.65);
+    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.88 : 0.65);
     const w = iw * s, h = ih * s;
     // position white strip and explore CTA at photo bottom edge
     // mobile: photo is bottom-anchored → bottom edge = ch
@@ -865,7 +865,15 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function pad(n) { return String(n).padStart(3, '0'); }
   // Mobile: only load frames 66-114 (49 frames) for faster load
-  const EXPECTED = isMob ? (MOB_END - MOB_START + 1) : TOTAL;
+  const INTRO_F  = isMob ? 75 : 31;   // intro ends at this frame
+  const START_F  = isMob ? MOB_START : 0;
+  const END_F    = isMob ? MOB_END : TOTAL - 1;
+  const INTRO_NEED = INTRO_F - START_F + 1; // frames needed to start intro
+  const EXPECTED   = isMob ? (MOB_END - MOB_START + 1) : TOTAL;
+  let introFrameCount = 0;
+  let introReady = false;
+  let allReady   = false;
+
   for (let i = 0; i < TOTAL; i++) {
     if (isMob && (i < MOB_START || i > MOB_END)) { images[i] = null; continue; }
     const img = new Image();
@@ -873,10 +881,15 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     img.onload = () => {
       loaded++;
       fill.style.width = (loaded / EXPECTED * 100) + '%';
-      if (!ready && loaded >= 1) draw(isMob ? MOB_START : 0);
+      if (i <= INTRO_F) introFrameCount++;
+      // Start intro as soon as intro frames are ready — no full-screen wait
+      if (!introReady && introFrameCount >= INTRO_NEED) {
+        introReady = true;
+        loader.classList.add('hidden');
+      }
       if (loaded === EXPECTED) {
-        ready = true;
-        setTimeout(() => loader.classList.add('hidden'), 400);
+        allReady = true;
+        if (!introReady) { introReady = true; loader.classList.add('hidden'); }
       }
     };
     img.onerror = () => { loaded++; };
@@ -897,124 +910,122 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     return 1 - (f - fFadeOut) / (fEnd - fFadeOut);
   }
 
-  // ── Phase machine: 3 discrete scroll gestures ──
-  // 0 → idle, waiting for 1st scroll
-  // 1 → playing frames 0→67  (auto, time-based)
-  // 2 → idle at frame 67, waiting for 2nd scroll
-  // 3 → playing frames 67→149 (auto, time-based)
-  // 4 → idle at frame 149, waiting for 3rd scroll → About
-  // 5 → done (scrolled to About, listeners removed)
-  let heroPhase = 0;
+  // ── Phase machine ──
+  // 0 = intro auto-playing (START_F → INTRO_F), no scroll needed
+  // 1 = paused at INTRO_F, mouse/touch reactive  [waits for scroll]
+  // 2 = rest auto-playing (INTRO_F → END_F)      [triggered by scroll]
+  // 3 = done at END_F                             [waits for scroll → About]
+  // 4 = going to About (listeners released)
+  let heroPhase  = 0;
   let phaseStartT = null;
-  const PHASE1_MS = 1800; // 0→67  over 1.8 s
-  const PHASE2_MS = 2000; // 67→149 over 2.0 s
-  const P1_START  = isMob ? MOB_START : 0;
-  const P1_END    = isMob ? 90        : 67;
-  const P2_END    = isMob ? MOB_END   : TOTAL - 1;
-  const LERP_T    = isMob ? 0.12 : 0.07;
+  const INTRO_MS = isMob ? 900  : 1400; // intro duration ms
+  const FULL_MS  = isMob ? 2400 : 3500; // full rest duration ms
+  const DRIFT    = isMob ? 4 : 8;       // mouse drift frames around INTRO_F
+
+  function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
 
   function updateOverlays(df) {
     if (isMob) {
-      // Phase 1 (66→90): st1 fades in mid-animation, gone by end of phase
-      st1.style.opacity = frameOp(df, 69, 74, 84, 90);
-      // Phase 3 (90→114): st2 fades in, holds, fades near end
+      // st1 (UX/UI): visible from first frame, stays through end
+      st1.style.opacity = frameOp(df, START_F, START_F, 108, 114);
+      // st2 (14+ years): appears during phase 2
       st2.style.opacity = frameOp(df, 93, 98, 108, 114);
       const b = Math.max(0, Math.min(1, (df - 112) / 2));
       exploreCTA.style.opacity = b;
       exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
     } else {
-      st1.style.opacity = frameOp(df, 0, 8, 55, 72);
-      st2.style.opacity = frameOp(df, 18, 28, 72, 90);
-      const b = Math.max(0, Math.min(1, (df - 68) / 8));
+      // st1 (UX/UI Designer): fades in during intro, stays visible
+      st1.style.opacity = frameOp(df, 5, 14, 125, 145);
+      // st2 (14+ years): also appears during intro so both are visible at pause
+      st2.style.opacity = frameOp(df, 18, 28, 128, 145);
+      const b = Math.max(0, Math.min(1, (df - 112) / 8));
       exploreCTA.style.opacity = b;
       exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
     }
-    // Scroll hint: visible only while waiting for user input
-    if (heroPhase === 0 || heroPhase === 2 || heroPhase === 4)
+    // Hint: show only when paused and waiting for user input
+    if (heroPhase === 1 || heroPhase === 3)
       hint.classList.remove('gone');
     else
       hint.classList.add('gone');
-    // Top progress bar reflects phase
-    const steps = [0, 0.16, 0.50, 0.50, 0.84, 1];
-    progBar.style.width = (steps[Math.min(heroPhase, 5)] * 100) + '%';
+    // Top progress bar tracks playback
+    progBar.style.width = (Math.min(df / END_F, 1) * 100) + '%';
   }
 
   function releaseHero() {
-    heroPhase = 5;
+    if (heroPhase >= 4) return;
+    heroPhase = 4;
     window.removeEventListener('wheel',     onHeroWheel);
     window.removeEventListener('touchmove', onHeroTouch);
   }
 
-  function advanceHero() {
-    if (heroPhase === 0)      { heroPhase = 1; phaseStartT = null; }
-    else if (heroPhase === 2) { heroPhase = 3; phaseStartT = null; }
-    else if (heroPhase === 4) {
+  // Wheel handler
+  function onHeroWheel(e) {
+    if (heroPhase >= 4) return;
+    if (e.deltaY <= 0) return; // only scroll-down
+    if (heroPhase === 0 || heroPhase === 2) return; // auto-playing, ignore
+    e.preventDefault();
+    if (heroPhase === 1) {
+      heroPhase = 2; phaseStartT = null; // start full animation
+    } else if (heroPhase === 3) {
       releaseHero();
       const about = document.getElementById('about');
       if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
     }
   }
-
-  // Intercept wheel while hero is active
-  function onHeroWheel(e) {
-    if (heroPhase >= 5) return;
-    if (e.deltaY > 0) {
-      if (heroPhase === 1 || heroPhase === 3) return; // animation in progress
-      e.preventDefault();
-      advanceHero();
-    }
-  }
   window.addEventListener('wheel', onHeroWheel, { passive: false });
 
-  // Touch support
+  // Touch handler
   let _ty = 0;
   window.addEventListener('touchstart', e => { _ty = e.touches[0].clientY; }, { passive: true });
   function onHeroTouch(e) {
-    if (heroPhase >= 5) return;
+    if (heroPhase >= 4) return;
     const dy = _ty - e.touches[0].clientY;
-    if (dy > 40 && heroPhase !== 1 && heroPhase !== 3) {
-      e.preventDefault();
-      _ty = e.touches[0].clientY;
-      advanceHero();
+    if (dy < 35) return; // not a strong enough swipe
+    if (heroPhase === 0 || heroPhase === 2) return;
+    e.preventDefault();
+    _ty = e.touches[0].clientY;
+    if (heroPhase === 1) {
+      heroPhase = 2; phaseStartT = null;
+    } else if (heroPhase === 3) {
+      releaseHero();
+      const about = document.getElementById('about');
+      if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
     }
   }
   window.addEventListener('touchmove', onHeroTouch, { passive: false });
 
-  // If user navigates away via nav link, release hero
+  // Release if user navigates away (nav links etc.)
   window.addEventListener('scroll', function() {
-    if (window.scrollY > window.innerHeight * 0.4 && heroPhase < 5) releaseHero();
+    if (window.scrollY > window.innerHeight * 0.4 && heroPhase < 4) releaseHero();
   }, { passive: true });
+  exploreCTA.addEventListener('click', function() { releaseHero(); });
 
-  // "Explore work" button also releases hero
-  exploreCTA.addEventListener('click', function() {
-    if (heroPhase < 5) releaseHero();
-  });
-
-  // ── Animation loop (rAF-based) ──
+  // ── Animation loop ──
   function animLoop(now) {
-    if (!ready) { requestAnimationFrame(animLoop); return; }
+    if (!introReady) { requestAnimationFrame(animLoop); return; }
 
     if (heroPhase === 0) {
-      targetFrame = P1_START;
+      // Intro: auto-play START_F → INTRO_F
+      if (!phaseStartT) phaseStartT = now;
+      const t = Math.min(1, (now - phaseStartT) / INTRO_MS);
+      targetFrame = START_F + easeInOut(t) * (INTRO_F - START_F);
+      if (t >= 1) { heroPhase = 1; targetFrame = INTRO_F; phaseStartT = null; }
     } else if (heroPhase === 1) {
-      if (!phaseStartT) phaseStartT = now;
-      const t    = Math.min(1, (now - phaseStartT) / PHASE1_MS);
-      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-      targetFrame = P1_START + ease * (P1_END - P1_START);
-      if (t >= 1) { heroPhase = 2; targetFrame = P1_END; }
+      // Paused: mouse/touch drifts frame ± DRIFT around INTRO_F
+      const drift = (mouseYNorm - 0.5) * 2 * DRIFT;
+      targetFrame = Math.max(INTRO_F - DRIFT, Math.min(INTRO_F + DRIFT, INTRO_F + drift));
     } else if (heroPhase === 2) {
-      targetFrame = P1_END;
-    } else if (heroPhase === 3) {
+      // Full animation: INTRO_F → END_F
       if (!phaseStartT) phaseStartT = now;
-      const t    = Math.min(1, (now - phaseStartT) / PHASE2_MS);
-      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-      targetFrame = P1_END + ease * (P2_END - P1_END);
-      if (t >= 1) { heroPhase = 4; targetFrame = P2_END; }
+      const t = Math.min(1, (now - phaseStartT) / FULL_MS);
+      targetFrame = INTRO_F + easeInOut(t) * (END_F - INTRO_F);
+      if (t >= 1) { heroPhase = 3; targetFrame = END_F; phaseStartT = null; }
     } else {
-      targetFrame = P2_END;
+      targetFrame = END_F; // hold at last frame
     }
 
-    displayFrame = lerp(displayFrame, targetFrame, LERP_T);
+    const lerpT = isMob ? 0.12 : 0.07;
+    displayFrame = lerp(displayFrame, targetFrame, lerpT);
     updateOverlays(displayFrame);
     draw(displayFrame);
     requestAnimationFrame(animLoop);
