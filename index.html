@@ -373,19 +373,19 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* st1: full-width, left-aligned, upper portion */
+  /* st1: top-left, appears during phase 1 animation */
   #st1 {
     left: 6% !important; right: auto !important;
-    top: 5vh !important; transform: none !important;
+    top: 8vh !important; transform: none !important;
     max-width: 88% !important; width: 88% !important;
     text-align: left !important;
   }
-  /* st2: full-width, CENTERED, upper portion */
+  /* st2: bottom-left, appears during phase 2 animation */
   #st2 {
-    left: 50% !important; right: auto !important;
-    top: 5vh !important; transform: translateX(-50%) !important;
+    left: 6% !important; right: auto !important;
+    bottom: 22% !important; top: auto !important; transform: none !important;
     max-width: 88% !important; width: 88% !important;
-    text-align: center !important;
+    text-align: left !important;
   }
   /* H0: UX/UI · 14+ */
   .hero-h0, .role-accent, .years-num {
@@ -915,8 +915,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function updateOverlays(df) {
     if (isMob) {
-      st1.style.opacity = frameOp(df, 66, 66, 93, 99);
-      st2.style.opacity = frameOp(df, 100, 106, 110, 114);
+      // Phase 1 (66→90): st1 fades in mid-animation, gone by end of phase
+      st1.style.opacity = frameOp(df, 69, 74, 84, 90);
+      // Phase 3 (90→114): st2 fades in, holds, fades near end
+      st2.style.opacity = frameOp(df, 93, 98, 108, 114);
       const b = Math.max(0, Math.min(1, (df - 112) / 2));
       exploreCTA.style.opacity = b;
       exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
