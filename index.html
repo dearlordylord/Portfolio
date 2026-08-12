@@ -16,7 +16,7 @@
   --v: #eb0065; --p: #984eff; --b: #9333ea;
   --r: 20px;
 }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: auto; }
 body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; overflow-x: hidden; }
 
 /* blobs */
@@ -312,8 +312,8 @@ section { position: relative; z-index: 1; }
 footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb); color: var(--muted); font-size: 0.78rem; position: relative; z-index: 1; }
 
 /* ── SCROLLY IMAGE SEQUENCE ── */
-#scrolly { position: relative; height: 700vh; }
-#scrolly-sticky { position: sticky; top: 0; height: 100vh; width: 100%; overflow: hidden; background: var(--bg); }
+#scrolly { position: relative; height: 100vh; }
+#scrolly-sticky { position: relative; height: 100vh; width: 100%; overflow: hidden; background: var(--bg); }
 #scrolly-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* loader */
 #scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
@@ -897,126 +897,127 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     return 1 - (f - fFadeOut) / (fEnd - fFadeOut);
   }
 
-  // ── Mode machine ──
-  // 'intro'   : time-based 0→28 (auto, no scroll needed)
-  // 'free1'   : scroll 28→68 + mouse Y reactive
-  // 'forced2' : time-based 68→87 (auto, blurry frames must not stop)
-  // 'free2'   : scroll 87→149
-  let mode = 'intro';
-  let introStartTime  = null;
-  let forced2StartT   = null;
-  const INTRO_MS      = 1800; // 0→28 plays over 1.8s
-  const FORCED2_MS    = 1400; // 68→87 plays over 1.4s
-
-  function getScrollProg() {
-    const el = document.getElementById('scrolly');
-    const top = el.getBoundingClientRect().top;
-    const totalH = el.offsetHeight - window.innerHeight;
-    return Math.max(0, Math.min(1, -top / totalH));
-  }
+  // ── Phase machine: 3 discrete scroll gestures ──
+  // 0 → idle, waiting for 1st scroll
+  // 1 → playing frames 0→67  (auto, time-based)
+  // 2 → idle at frame 67, waiting for 2nd scroll
+  // 3 → playing frames 67→149 (auto, time-based)
+  // 4 → idle at frame 149, waiting for 3rd scroll → About
+  // 5 → done (scrolled to About, listeners removed)
+  let heroPhase = 0;
+  let phaseStartT = null;
+  const PHASE1_MS = 1800; // 0→67  over 1.8 s
+  const PHASE2_MS = 2000; // 67→149 over 2.0 s
+  const P1_START  = isMob ? MOB_START : 0;
+  const P1_END    = isMob ? 90        : 67;
+  const P2_END    = isMob ? MOB_END   : TOTAL - 1;
+  const LERP_T    = isMob ? 0.12 : 0.07;
 
   function updateOverlays(df) {
-    if (canvas.width <= 768) {
-      // Mobile: st1 UX/UI — appears immediately at frame 66, fades out 93→99
+    if (isMob) {
       st1.style.opacity = frameOp(df, 66, 66, 93, 99);
       st2.style.opacity = frameOp(df, 100, 106, 110, 114);
-      const btnOp = Math.max(0, Math.min(1, (df - 112) / 2));
-      exploreCTA.style.opacity = btnOp;
-      exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
+      const b = Math.max(0, Math.min(1, (df - 112) / 2));
+      exploreCTA.style.opacity = b;
+      exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
     } else {
-      // Desktop
       st1.style.opacity = frameOp(df, 0, 8, 55, 72);
       st2.style.opacity = frameOp(df, 18, 28, 72, 90);
-      const btnOp = Math.max(0, Math.min(1, (df - 68) / 8));
-      exploreCTA.style.opacity = btnOp;
-      exploreCTA.style.pointerEvents = btnOp > 0.5 ? 'all' : 'none';
+      const b = Math.max(0, Math.min(1, (df - 68) / 8));
+      exploreCTA.style.opacity = b;
+      exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
+    }
+    // Scroll hint: visible only while waiting for user input
+    if (heroPhase === 0 || heroPhase === 2 || heroPhase === 4)
+      hint.classList.remove('gone');
+    else
+      hint.classList.add('gone');
+    // Top progress bar reflects phase
+    const steps = [0, 0.16, 0.50, 0.50, 0.84, 1];
+    progBar.style.width = (steps[Math.min(heroPhase, 5)] * 100) + '%';
+  }
+
+  function releaseHero() {
+    heroPhase = 5;
+    window.removeEventListener('wheel',     onHeroWheel);
+    window.removeEventListener('touchmove', onHeroTouch);
+  }
+
+  function advanceHero() {
+    if (heroPhase === 0)      { heroPhase = 1; phaseStartT = null; }
+    else if (heroPhase === 2) { heroPhase = 3; phaseStartT = null; }
+    else if (heroPhase === 4) {
+      releaseHero();
+      const about = document.getElementById('about');
+      if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
     }
   }
 
-  let snapQueued = false;
-  function onScroll() {
-    const prog = getScrollProg();
-    progBar.style.width = (prog * 100) + '%';
-    // Hint stays visible all the way until About section is near
-    if (prog > 0.92) hint.classList.add('gone');
-    else             hint.classList.remove('gone');
-
-    // Smooth-snap to About when animation finishes (mobile & desktop)
-    if (prog >= 0.98 && !snapQueued) {
-      snapQueued = true;
-      setTimeout(function() {
-        const about = document.getElementById('about');
-        if (about) about.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 150);
+  // Intercept wheel while hero is active
+  function onHeroWheel(e) {
+    if (heroPhase >= 5) return;
+    if (e.deltaY > 0) {
+      if (heroPhase === 1 || heroPhase === 3) return; // animation in progress
+      e.preventDefault();
+      advanceHero();
     }
-    if (prog < 0.90) snapQueued = false;
-
-    if (canvas.width <= 768) {
-      // Mobile: scroll directly maps to frames 66→114
-      targetFrame = MOB_START + prog * (MOB_END - MOB_START);
-      targetFrame = Math.max(MOB_START, Math.min(MOB_END, targetFrame));
-      return;
-    }
-
-    if (mode === 'intro' || mode === 'forced2') return; // time-based, ignore scroll
-    if (mode === 'free1') {
-      const p = Math.min(1, prog / SCROLL_SPLIT);
-      targetFrame = F_INTRO_END + p * (F_FREE1_END - F_INTRO_END);
-      if (prog >= SCROLL_SPLIT && !forced2StartT) {
-        mode = 'forced2';
-        forced2StartT = performance.now();
-      }
-    } else if (mode === 'free2') {
-      const p = Math.max(0, (prog - SCROLL_SPLIT) / (1 - SCROLL_SPLIT));
-      targetFrame = F_FORCED_END + p * (TOTAL - 1 - F_FORCED_END);
-    }
-    targetFrame = Math.max(0, Math.min(TOTAL - 1, targetFrame));
   }
+  window.addEventListener('wheel', onHeroWheel, { passive: false });
 
-  window.addEventListener('scroll', onScroll, { passive: true });
-
-  // Mouse Y adds subtle variation in free1 zone
-  document.addEventListener('mousemove', () => {
-    if (mode !== 'free1') return;
-    const prog = getScrollProg();
-    if (prog > 0.08 && prog < SCROLL_SPLIT) {
-      const scrollF = F_INTRO_END + (prog / SCROLL_SPLIT) * (F_FREE1_END - F_INTRO_END);
-      const mouseF  = F_INTRO_END + mouseYNorm * (F_FREE1_END - F_INTRO_END);
-      targetFrame = scrollF * 0.80 + mouseF * 0.20;
-      targetFrame = Math.max(F_INTRO_END, Math.min(F_FREE1_END, targetFrame));
+  // Touch support
+  let _ty = 0;
+  window.addEventListener('touchstart', e => { _ty = e.touches[0].clientY; }, { passive: true });
+  function onHeroTouch(e) {
+    if (heroPhase >= 5) return;
+    const dy = _ty - e.touches[0].clientY;
+    if (dy > 40 && heroPhase !== 1 && heroPhase !== 3) {
+      e.preventDefault();
+      _ty = e.touches[0].clientY;
+      advanceHero();
     }
+  }
+  window.addEventListener('touchmove', onHeroTouch, { passive: false });
+
+  // If user navigates away via nav link, release hero
+  window.addEventListener('scroll', function() {
+    if (window.scrollY > window.innerHeight * 0.4 && heroPhase < 5) releaseHero();
+  }, { passive: true });
+
+  // "Explore work" button also releases hero
+  exploreCTA.addEventListener('click', function() {
+    if (heroPhase < 5) releaseHero();
   });
 
   // ── Animation loop (rAF-based) ──
   function animLoop(now) {
     if (!ready) { requestAnimationFrame(animLoop); return; }
 
-    if (canvas.width <= 768) {
-      // Mobile: no mode machine — scroll drives frames directly
-      displayFrame = lerp(displayFrame, targetFrame, 0.12);
+    if (heroPhase === 0) {
+      targetFrame = P1_START;
+    } else if (heroPhase === 1) {
+      if (!phaseStartT) phaseStartT = now;
+      const t    = Math.min(1, (now - phaseStartT) / PHASE1_MS);
+      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+      targetFrame = P1_START + ease * (P1_END - P1_START);
+      if (t >= 1) { heroPhase = 2; targetFrame = P1_END; }
+    } else if (heroPhase === 2) {
+      targetFrame = P1_END;
+    } else if (heroPhase === 3) {
+      if (!phaseStartT) phaseStartT = now;
+      const t    = Math.min(1, (now - phaseStartT) / PHASE2_MS);
+      const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+      targetFrame = P1_END + ease * (P2_END - P1_END);
+      if (t >= 1) { heroPhase = 4; targetFrame = P2_END; }
     } else {
-      // Desktop: mode machine
-      if (mode === 'intro') {
-        if (!introStartTime) introStartTime = now;
-        const t    = Math.min(1, (now - introStartTime) / INTRO_MS);
-        const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-        targetFrame = ease * F_INTRO_END;
-        if (t >= 1) { mode = 'free1'; targetFrame = F_INTRO_END; }
-      } else if (mode === 'forced2') {
-        const t    = Math.min(1, (now - forced2StartT) / FORCED2_MS);
-        const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-        targetFrame = F_FREE1_END + ease * (F_FORCED_END - F_FREE1_END);
-        if (t >= 1) { mode = 'free2'; targetFrame = F_FORCED_END; onScroll(); }
-      }
-      displayFrame = lerp(displayFrame, targetFrame, 0.07);
+      targetFrame = P2_END;
     }
 
+    displayFrame = lerp(displayFrame, targetFrame, LERP_T);
     updateOverlays(displayFrame);
     draw(displayFrame);
     requestAnimationFrame(animLoop);
   }
   requestAnimationFrame(animLoop);
-  onScroll();
 })();
 
 // ═══════════════════════════════════════
