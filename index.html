@@ -313,7 +313,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
 /* ── SCROLLY IMAGE SEQUENCE ── */
 #scrolly { position: relative; height: 100vh; z-index: 5; }
-#scrolly-sticky { position: relative; height: 100vh; width: 100%; overflow: hidden; background: var(--bg); }
+#scrolly-sticky { position: relative; height: 100vh; width: 100%; overflow: hidden; background: transparent; }
 #scrolly-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* loader */
 #scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
@@ -373,19 +373,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* st1: top-left, visible immediately above photo */
+  /* st1: top-left, UX/UI Designer above photo */
   #st1 {
     left: 6% !important; right: auto !important;
-    top: 12vh !important; transform: none !important;
+    top: 8vh !important; transform: none !important;
     max-width: 88% !important; width: 88% !important;
     text-align: left !important;
   }
-  /* st2: bottom-left, appears during phase 2 animation */
+  /* st2: hidden on mobile */
   #st2 {
-    left: 6% !important; right: auto !important;
-    bottom: 22% !important; top: auto !important; transform: none !important;
-    max-width: 88% !important; width: 88% !important;
-    text-align: left !important;
+    display: none !important;
   }
   /* H0: UX/UI · 14+ */
   .hero-h0, .role-accent, .years-num {
@@ -449,8 +446,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
     <!-- overlay 1: left — UX/UI + skills -->
     <div class="st" id="st1">
-      <span class="hero-h0 hide-on-mobile">UX/UI</span>
-      <span class="hero-h0 show-on-mobile" style="display:none">14+</span>
+      <span class="hero-h0">UX/UI</span>
       <span class="hero-h1">Designer</span>
       <div class="st-skills-list">
         <span>UX Research · User Flows</span>
@@ -819,7 +815,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.88 : 0.65);
+    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.60 : 0.65);
     const w = iw * s, h = ih * s;
     // position white strip and explore CTA at photo bottom edge
     // mobile: photo is bottom-anchored → bottom edge = ch
@@ -979,10 +975,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   window.addEventListener('touchstart', e => { _ty = e.touches[0].clientY; }, { passive: true });
   function onHeroTouch(e) {
     if (heroPhase >= 4) return;
+    e.preventDefault(); // always block scroll/overscroll (up or down) while hero is active
     const dy = _ty - e.touches[0].clientY;
-    if (dy < 35) return; // not a strong enough swipe
+    if (dy < 35) return; // not a strong enough downward swipe
     if (heroPhase === 0 || heroPhase === 2) return;
-    e.preventDefault();
     _ty = e.touches[0].clientY;
     if (heroPhase === 1) {
       heroPhase = 2; phaseStartT = null;
