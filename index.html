@@ -802,8 +802,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     const iw = img.naturalWidth, ih = img.naturalHeight;
     const s = Math.max(cw / iw, ch / ih) * 0.65;
     const w = iw * s, h = ih * s;
+    // mobile: push photo down so the CTA lands at the bottom of the first screen
+    const yPos = (cw <= 768) ? (ch * 0.90 - h) : (ch - h) / 2;
     // position white strip and explore CTA at photo bottom edge
-    const photoBottom = (ch - h) / 2 + h;
+    const photoBottom = yPos + h;
     const strip = document.getElementById('photo-strip');
     if (strip) strip.style.top = photoBottom + 'px';
     if (exploreCTA) exploreCTA.style.top = photoBottom + 'px';
@@ -829,7 +831,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     // ── 2. Photo — centered ──
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(img, (cw - w) / 2 + xOff, (ch - h) / 2, w, h);
+    ctx.drawImage(img, (cw - w) / 2 + xOff, yPos, w, h);
 
     // ── 3. ШУМ.png noise via multiply — dark grain visible on light areas ──
     if (noiseImg.complete && noiseImg.naturalWidth) {
