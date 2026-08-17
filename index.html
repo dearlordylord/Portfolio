@@ -373,34 +373,35 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* st1: top-left, UX/UI Designer above photo */
+  /* Same desktop layout, stacked vertically so the two overlays don't collide */
+  /* st1: top-left */
   #st1 {
-    left: 6% !important; right: auto !important;
-    top: 8vh !important; transform: none !important;
-    max-width: 88% !important; width: 88% !important;
-    text-align: left !important;
+    left: 6%; right: auto;
+    top: 9vh; transform: none;
+    max-width: 70%; width: 70%;
+    text-align: left;
   }
-  /* st2: hidden on mobile */
+  /* st2: bottom-right (mirrors desktop's right-side placement) */
   #st2 {
-    display: none !important;
+    right: 6%; left: auto;
+    bottom: 12vh; top: auto; transform: none;
+    max-width: 70%; width: 70%;
+    text-align: right;
   }
   /* H0: UX/UI · 14+ */
   .hero-h0, .role-accent, .years-num {
-    font-size: clamp(2.8rem, 17vw, 5.5rem) !important;
-    white-space: normal !important; line-height: 0.88 !important;
+    font-size: clamp(2.2rem, 11vw, 3.6rem) !important;
+    white-space: nowrap !important; line-height: 0.9 !important;
   }
-  /* mobile: hide UX/UI, show 14+ instead */
-  .hide-on-mobile { display: none !important; }
-  .show-on-mobile { display: block !important; }
   /* H1: Designer · years */
   .hero-h1, .role-sub, .years-word {
-    font-size: clamp(2rem, 13vw, 4rem) !important;
+    font-size: clamp(1.5rem, 8vw, 2.6rem) !important;
     line-height: 1 !important;
   }
   /* Supporting text */
-  .st-skills-list { font-size: clamp(0.9rem, 4.5vw, 1.2rem); margin-top: 1rem; line-height: 1.8; }
-  .st-line-sm { font-size: clamp(1rem, 5.5vw, 1.5rem) !important; margin-top: 0.6rem; }
-  .st-sub { font-size: clamp(0.75rem, 3.8vw, 1rem); margin-top: 0.4rem; }
+  .st-skills-list { font-size: clamp(0.7rem, 3.2vw, 0.9rem); margin-top: 0.8rem; line-height: 1.7; }
+  .st-line-sm { font-size: clamp(0.9rem, 4vw, 1.2rem) !important; margin-top: 0.5rem; }
+  .st-sub { font-size: clamp(0.65rem, 3vw, 0.85rem); margin-top: 0.35rem; }
   /* Bump z-index so explore CTA and strip stay above other layers in Safari */
   #explore-cta { z-index: 30 !important; }
   #photo-strip { z-index: 25 !important; }
@@ -763,16 +764,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 //   SCROLLY IMAGE SEQUENCE
 // ═══════════════════════════════════════
 (function() {
-  const TOTAL    = 150;
-  // Mobile: only load/show frames 66-114 (49 frames instead of 150)
-  const MOB_START = 66;
-  const MOB_END   = 114;
-  // ── Frame zone boundaries (desktop) ──
-  const F_INTRO_END  = 31;   // auto-play 0→31  (forced, blurry)
-  const F_FREE1_END  = 68;   // scroll 28→68   (free, mouse-reactive)
-  const F_FORCED_END = 87;   // auto-play 68→87 (forced, blurry)
-  // 87→149 : scroll-driven (free)
-  const SCROLL_SPLIT = 0.50; // scroll 0–SPLIT → frames 28–68
+  const TOTAL = 150;
 
   const canvas  = document.getElementById('scrolly-canvas');
   const ctx     = canvas.getContext('2d');
@@ -784,12 +776,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   const st2 = document.getElementById('st2');
   const exploreCTA = document.getElementById('explore-cta');
 
-  const isMob = window.innerWidth <= 768;
   let images = new Array(TOTAL);
-  let loaded = 0, ready = false;
-  // Mobile starts at frame 66; desktop starts at 0
-  let targetFrame = isMob ? MOB_START : 0;
-  let displayFrame = isMob ? MOB_START : 0;
+  let loaded = 0;
+  let targetFrame = 0;
+  let displayFrame = 0;
   let mouseYNorm = 0.5;
 
   // ── noise PNG overlay ──
@@ -805,21 +795,15 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   resize();
 
   function draw(idx) {
-    const isMobDraw = canvas.width <= 768;
-    if (isMobDraw) {
-      idx = Math.max(MOB_START, Math.min(MOB_END, Math.round(idx)));
-    } else {
-      idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
-    }
+    idx = Math.max(0, Math.min(TOTAL - 1, Math.round(idx)));
     const img = images[idx];
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = Math.max(cw / iw, ch / ih) * (cw <= 768 ? 0.60 : 0.65);
+    const s = Math.max(cw / iw, ch / ih) * 0.65;
     const w = iw * s, h = ih * s;
     // position white strip and explore CTA at photo bottom edge
-    // mobile: photo is bottom-anchored → bottom edge = ch
-    const photoBottom = (cw <= 768) ? ch : (ch - h) / 2 + h;
+    const photoBottom = (ch - h) / 2 + h;
     const strip = document.getElementById('photo-strip');
     if (strip) strip.style.top = photoBottom + 'px';
     if (exploreCTA) exploreCTA.style.top = photoBottom + 'px';
@@ -842,11 +826,10 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.fillText('IVASHCHENKO', cw / 2 + xOff, ch * 0.56);
     ctx.restore();
 
-    // ── 2. Photo — mobile: bottom-anchored; desktop: centered ──
+    // ── 2. Photo — centered ──
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    const yPos = (cw <= 768) ? (ch - h) : (ch - h) / 2;
-    ctx.drawImage(img, (cw - w) / 2 + xOff, yPos, w, h);
+    ctx.drawImage(img, (cw - w) / 2 + xOff, (ch - h) / 2, w, h);
 
     // ── 3. ШУМ.png noise via multiply — dark grain visible on light areas ──
     if (noiseImg.complete && noiseImg.naturalWidth) {
@@ -860,18 +843,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   }
 
   function pad(n) { return String(n).padStart(3, '0'); }
-  // Mobile: only load frames 66-114 (49 frames) for faster load
-  const INTRO_F  = isMob ? 75 : 31;   // intro ends at this frame
-  const START_F  = isMob ? MOB_START : 0;
-  const END_F    = isMob ? MOB_END : TOTAL - 1;
+  const INTRO_F  = 31;        // intro ends at this frame
+  const START_F  = 0;
+  const END_F    = TOTAL - 1;
   const INTRO_NEED = INTRO_F - START_F + 1; // frames needed to start intro
-  const EXPECTED   = isMob ? (MOB_END - MOB_START + 1) : TOTAL;
+  const EXPECTED   = TOTAL;
   let introFrameCount = 0;
   let introReady = false;
   let allReady   = false;
 
   for (let i = 0; i < TOTAL; i++) {
-    if (isMob && (i < MOB_START || i > MOB_END)) { images[i] = null; continue; }
     const img = new Image();
     img.src = `Кадры/frame_${pad(i)}_delay-0.067s.webp`;
     img.onload = () => {
@@ -914,30 +895,20 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   // 4 = going to About (listeners released)
   let heroPhase  = 0;
   let phaseStartT = null;
-  const INTRO_MS = isMob ? 900  : 1400; // intro duration ms
-  const FULL_MS  = isMob ? 2400 : 3500; // full rest duration ms
-  const DRIFT    = isMob ? 4 : 8;       // mouse drift frames around INTRO_F
+  const INTRO_MS = 1400; // intro duration ms
+  const FULL_MS  = 3500; // full rest duration ms
+  const DRIFT    = 8;    // pointer drift frames around INTRO_F
 
   function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
 
   function updateOverlays(df) {
-    if (isMob) {
-      // st1 (UX/UI): visible from first frame, stays through end
-      st1.style.opacity = frameOp(df, START_F, START_F, 108, 114);
-      // st2 (14+ years): appears during phase 2
-      st2.style.opacity = frameOp(df, 93, 98, 108, 114);
-      const b = Math.max(0, Math.min(1, (df - 112) / 2));
-      exploreCTA.style.opacity = b;
-      exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
-    } else {
-      // st1 (UX/UI Designer): fades in during intro, stays visible
-      st1.style.opacity = frameOp(df, 5, 14, 125, 145);
-      // st2 (14+ years): also appears during intro so both are visible at pause
-      st2.style.opacity = frameOp(df, 18, 28, 128, 145);
-      const b = Math.max(0, Math.min(1, (df - 112) / 8));
-      exploreCTA.style.opacity = b;
-      exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
-    }
+    // st1 (UX/UI Designer): fades in during intro, stays visible
+    st1.style.opacity = frameOp(df, 5, 14, 125, 145);
+    // st2 (14+ years): also appears during intro so both are visible at pause
+    st2.style.opacity = frameOp(df, 18, 28, 128, 145);
+    const b = Math.max(0, Math.min(1, (df - 112) / 8));
+    exploreCTA.style.opacity = b;
+    exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
     // Hint: show only when paused and waiting for user input
     if (heroPhase === 1 || heroPhase === 3)
       hint.classList.remove('gone');
@@ -975,11 +946,14 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   window.addEventListener('touchstart', e => { _ty = e.touches[0].clientY; }, { passive: true });
   function onHeroTouch(e) {
     if (heroPhase >= 4) return;
-    e.preventDefault(); // always block scroll/overscroll (up or down) while hero is active
-    const dy = _ty - e.touches[0].clientY;
-    if (dy < 35) return; // not a strong enough downward swipe
-    if (heroPhase === 0 || heroPhase === 2) return;
-    _ty = e.touches[0].clientY;
+    e.preventDefault(); // block native scroll/overscroll while hero is active
+    const y  = e.touches[0].clientY;
+    const dy = _ty - y;
+    // touch also drives the pointer drift during the pause (like mouse on desktop)
+    mouseYNorm = Math.max(0, Math.min(1, y / window.innerHeight));
+    if (dy < 30) return;              // needs a real downward swipe
+    if (heroPhase === 0 || heroPhase === 2) return; // auto-playing, ignore
+    _ty = y;
     if (heroPhase === 1) {
       heroPhase = 2; phaseStartT = null;
     } else if (heroPhase === 3) {
@@ -1020,8 +994,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       targetFrame = END_F; // hold at last frame
     }
 
-    const lerpT = isMob ? 0.12 : 0.07;
-    displayFrame = lerp(displayFrame, targetFrame, lerpT);
+    displayFrame = lerp(displayFrame, targetFrame, 0.07);
     updateOverlays(displayFrame);
     draw(displayFrame);
     requestAnimationFrame(animLoop);
