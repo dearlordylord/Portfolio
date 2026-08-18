@@ -56,8 +56,8 @@ nav {
 /* ── SHARED SECTION ── */
 section { position: relative; z-index: 1; }
 .sw { max-width: 1100px; margin: 0 auto; padding: 6rem 4rem; }
-#about { margin-top: -18vh; position: relative; z-index: 2; background: #f5f5fa; border-radius: 24px 24px 0 0; box-shadow: 0 -20px 60px rgba(120,100,180,0.08); }
-#about .sw { padding-top: 6rem; }
+#about { margin-top: -15vh; position: relative; z-index: 10; background: #f5f5fa; border-radius: 24px 24px 0 0; box-shadow: 0 -20px 60px rgba(120,100,180,0.08); }
+#about .sw { padding-top: 10rem; }
 .stag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--v); margin-bottom: 0.75rem; }
 .stitle { font-family: 'Syne', sans-serif; font-size: clamp(1.9rem, 4vw, 2.8rem); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 1.5rem; }
 .stitle em { font-style: normal; color: var(--v); }
@@ -314,7 +314,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 /* ── SCROLLY IMAGE SEQUENCE ── */
 #scrolly { position: relative; height: 100vh; z-index: 5; }
 #scrolly-sticky { position: relative; height: 100vh; width: 100%; overflow: hidden; background: transparent; }
-#scrolly-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* canvas is 85% of the viewport height on every device */
+#scrolly-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 85vh; display: block; }
 /* loader */
 #scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
 #scrolly-loader.hidden { opacity: 0; pointer-events: none; }
@@ -324,13 +325,13 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 /* text overlays */
 .st { position: absolute; z-index: 10; pointer-events: none; opacity: 0; will-change: opacity; }
 /* st1: left side — UX/UI + skills */
-#st1 { left: 6%; top: 50%; transform: translateY(-50%); max-width: 400px; }
+#st1 { left: 6%; top: 38%; transform: translateY(-50%); max-width: 400px; }
 /* st2: RIGHT side — "15 years" (she'll look at it) */
-#st2 { right: 6%; top: 50%; transform: translateY(-50%); text-align: right; max-width: 420px; }
+#st2 { right: 6%; top: 38%; transform: translateY(-50%); text-align: right; max-width: 420px; }
 /* explore CTA — sits ON the white strip line, centered */
-#explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 22; opacity: 0; pointer-events: none; white-space: nowrap; top: 100%; }
+#explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 40; opacity: 0; pointer-events: none; white-space: nowrap; top: 100%; }
 /* second noise layer — on top of everything for texture */
-#noise-top { position: absolute; inset: 0; z-index: 21; background: url('Кадры/ШУМ.png') center/cover; mix-blend-mode: multiply; opacity: 0.42; pointer-events: none; }
+#noise-top { position: absolute; top: 0; left: 0; right: 0; height: 100%; z-index: 21; background: url('Кадры/ШУМ.png') center/cover; mix-blend-mode: multiply; opacity: 0.42; pointer-events: none; }
 /* ── Hero typography scale ─────────────────────────────
    H0 → UX/UI · 14+      (gradient, biggest)
    H1 → Designer · years  (purple, large)
@@ -350,7 +351,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 /* white strip — positioned by JS directly under photo bottom edge */
 #photo-strip { position: absolute; left: 0; right: 0; height: 4px; background: #fff; z-index: 15; pointer-events: none; top: 100%; }
 /* scroll hint */
-#scroll-hint { position: absolute; bottom: 2.5rem; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.8s; pointer-events: none; }
+#scroll-hint { position: absolute; top: 85vh; left: 50%; transform: translateX(-50%); z-index: 41; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.8s; pointer-events: none; }
 #scroll-hint.gone { opacity: 0; }
 .scroll-hint-label { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 .scroll-hint-arrow { width: 22px; height: 22px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); animation: arrowBounce 1.5s ease-in-out infinite; }
@@ -374,20 +375,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 }
 @media (max-width: 768px) {
   /* Same desktop layout, stacked vertically so the two overlays don't collide */
-  /* st1: top-left */
+  /* st1: top, centered above the head */
   #st1 {
-    left: 6%; right: auto;
+    left: 0; right: 0;
     top: 9vh; transform: none;
-    max-width: 70%; width: 70%;
-    text-align: left;
+    max-width: 100%; width: 100%;
+    text-align: center;
+    padding: 0 4%;
   }
-  /* st2: bottom-right (mirrors desktop's right-side placement) */
-  #st2 {
-    right: 6%; left: auto;
-    bottom: 12vh; top: auto; transform: none;
-    max-width: 70%; width: 70%;
-    text-align: right;
-  }
+  /* st2: hidden on mobile — no room, it collided with the About section */
+  #st2 { display: none; }
   /* H0: UX/UI · 14+ */
   .hero-h0, .role-accent, .years-num {
     font-size: clamp(2.2rem, 11vw, 3.6rem) !important;
@@ -466,19 +463,17 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     <!-- second noise layer — on top of everything -->
     <div id="noise-top"></div>
 
-    <!-- explore CTA — appears after intro, sits on white strip -->
-    <div id="explore-cta">
-      <a href="#about" class="btn btn-primary">Explore work ↓</a>
-    </div>
-
-    <!-- scroll hint -->
-    <div id="scroll-hint">
-      <span class="scroll-hint-label">Scroll</span>
-      <div class="scroll-hint-arrow"></div>
-    </div>
-
   </div>
 </section>
+
+<!-- explore CTA + scroll hint — outside #scrolly so they stay above About -->
+<div id="explore-cta">
+  <a href="#about" class="btn btn-primary">Explore work ↓</a>
+</div>
+<div id="scroll-hint">
+  <span class="scroll-hint-label">Scroll down</span>
+  <div class="scroll-hint-arrow"></div>
+</div>
 
 <!-- ABOUT -->
 <section id="about">
@@ -788,7 +783,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function resize() {
     canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
+    canvas.height = Math.round(window.innerHeight * 0.85);
     draw(displayFrame);
   }
   window.addEventListener('resize', resize);
@@ -800,20 +795,38 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const s = Math.max(cw / iw, ch / ih) * 0.65;
+    const isMobDraw = cw <= 768;
+    const s = Math.max(cw / iw, ch / ih) * (isMobDraw ? 0.73 : 0.78);
     const w = iw * s, h = ih * s;
-    // mobile: push photo down so the CTA lands at the bottom of the first screen
-    const yPos = (cw <= 768) ? (ch * 0.90 - h) : (ch - h) / 2;
-    // position white strip and explore CTA at photo bottom edge
-    const photoBottom = yPos + h;
+    // photo is bottom-anchored inside the 85vh canvas on every device
+    const yPos = ch - h;
+    // canvas bottom edge = boundary between hero and About
+    const photoBottom = ch;
     const strip = document.getElementById('photo-strip');
     if (strip) strip.style.top = photoBottom + 'px';
+    // noise overlay covers exactly the canvas area
+    const nTop = document.getElementById('noise-top');
+    if (nTop) nTop.style.height = Math.round(photoBottom) + 'px';
+    // CTA sits centred on the boundary; hint sits just below it
     if (exploreCTA) exploreCTA.style.top = photoBottom + 'px';
+    if (hint) hint.style.top = (photoBottom + 62) + 'px';
 
     ctx.clearRect(0, 0, cw, ch);
     ctx.globalCompositeOperation = 'source-over';
 
     const xOff = 0; // centered
+
+    // ── 0. Backdrop: soft radial wash matching the tone baked into the frames,
+    //       so the corners don't read as a flat "hole" next to the photo.
+    const g = ctx.createRadialGradient(
+      cw / 2, ch * 0.5, 0,
+      cw / 2, ch * 0.5, Math.max(cw, ch) * 0.75
+    );
+    g.addColorStop(0,   '#eae7f3');
+    g.addColorStop(0.6, '#ebecf4');
+    g.addColorStop(1,   '#edeef6');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, cw, ch);
 
     // ── 1. NAME behind photo (shows through transparent bg of WebP) ──
     ctx.save();
@@ -822,10 +835,13 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     const sz1 = Math.min(cw * 0.17, 230);
     ctx.font = `800 ${sz1}px Syne, sans-serif`;
     ctx.globalAlpha = 0.92;
-    ctx.fillText('IRINA', cw / 2 + xOff, ch * 0.40);
+    // name sits behind the head (fractions of the 85vh canvas)
+    const ny1 = isMobDraw ? 0.71 : 0.47;
+    const ny2 = isMobDraw ? 0.88 : 0.66;
+    ctx.fillText('IRINA', cw / 2 + xOff, ch * ny1);
     const sz2 = Math.min(cw * 0.093, 128);
     ctx.font = `800 ${sz2}px Syne, sans-serif`;
-    ctx.fillText('IVASHCHENKO', cw / 2 + xOff, ch * 0.56);
+    ctx.fillText('IVASHCHENKO', cw / 2 + xOff, ch * ny2);
     ctx.restore();
 
     // ── 2. Photo — centered ──
@@ -842,6 +858,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+
   }
 
   function pad(n) { return String(n).padStart(3, '0'); }
@@ -1162,7 +1179,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     resize();
     var mob  = window.innerWidth <= 768;
     var list = mob ? SKILLS.slice(0, 10) : SKILLS;
-    var sc   = mob ? 0.65 : 1;
+    var sc   = mob ? 0.80 : 1.22;
     var cols = Math.ceil(Math.sqrt(list.length * W / H));
     var rows = Math.ceil(list.length / cols);
     var cx = W / 2, cy = H / 2;
