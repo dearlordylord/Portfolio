@@ -796,7 +796,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
     const isMobDraw = cw <= 768;
-    const s = Math.max(cw / iw, ch / ih) * (isMobDraw ? 0.73 : 0.78);
+    const s = Math.max(cw / iw, ch / ih) * (isMobDraw ? 0.55 : 0.59);
     const w = iw * s, h = ih * s;
     // photo is bottom-anchored inside the 85vh canvas on every device
     const yPos = ch - h;
@@ -944,18 +944,28 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     window.removeEventListener('touchmove', onHeroTouch);
   }
 
+  // Second scroll: hold a beat so the head movement reads, then glide to About.
+  const EXIT_HOLD_MS = 750;
+  function goToAbout() {
+    if (heroPhase !== 3) return;
+    heroPhase = 3.5;            // still < 4, so native scroll stays blocked
+    setTimeout(function() {
+      releaseHero();
+      const about = document.getElementById('about');
+      if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
+    }, EXIT_HOLD_MS);
+  }
+
   // Wheel handler
   function onHeroWheel(e) {
     if (heroPhase >= 4) return;
     if (e.deltaY <= 0) return; // only scroll-down
-    if (heroPhase === 0 || heroPhase === 2) return; // auto-playing, ignore
+    if (heroPhase !== 1 && heroPhase !== 3) return; // auto-playing or exiting
     e.preventDefault();
     if (heroPhase === 1) {
       heroPhase = 2; phaseStartT = null; // start full animation
-    } else if (heroPhase === 3) {
-      releaseHero();
-      const about = document.getElementById('about');
-      if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
+    } else {
+      goToAbout();
     }
   }
   window.addEventListener('wheel', onHeroWheel, { passive: false });
@@ -971,14 +981,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     // touch also drives the pointer drift during the pause (like mouse on desktop)
     mouseYNorm = Math.max(0, Math.min(1, y / window.innerHeight));
     if (dy < 30) return;              // needs a real downward swipe
-    if (heroPhase === 0 || heroPhase === 2) return; // auto-playing, ignore
+    if (heroPhase !== 1 && heroPhase !== 3) return; // auto-playing or exiting
     _ty = y;
     if (heroPhase === 1) {
       heroPhase = 2; phaseStartT = null;
-    } else if (heroPhase === 3) {
-      releaseHero();
-      const about = document.getElementById('about');
-      if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
+    } else {
+      goToAbout();
     }
   }
   window.addEventListener('touchmove', onHeroTouch, { passive: false });
@@ -1009,8 +1017,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       const t = Math.min(1, (now - phaseStartT) / FULL_MS);
       targetFrame = INTRO_F + easeInOut(t) * (END_F - INTRO_F);
       if (t >= 1) { heroPhase = 3; targetFrame = END_F; phaseStartT = null; }
+    } else if (heroPhase === 3 || heroPhase === 3.5) {
+      // hold at the end, still pointer-reactive so the head keeps moving
+      const drift = (mouseYNorm - 0.5) * 2 * DRIFT;
+      targetFrame = Math.max(END_F - DRIFT * 2, Math.min(END_F, END_F - DRIFT + drift));
     } else {
-      targetFrame = END_F; // hold at last frame
+      targetFrame = END_F; // released — hold at last frame
     }
 
     displayFrame = lerp(displayFrame, targetFrame, 0.07);
