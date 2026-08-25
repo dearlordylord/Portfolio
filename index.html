@@ -367,8 +367,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   50%     { box-shadow: 0 6px 36px rgba(152,78,255,0.40), 0 0 0 10px rgba(194,24,91,0.12); transform: scale(1.04); }
 }
 #explore-cta .btn-primary { animation: pulseCTA 2.2s ease-in-out infinite; }
-/* top progress bar */
-#scrolly-progress { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, #eb0065, #984eff); width: 0%; z-index: 200; pointer-events: none; }
+/* The former top playback bar was intentionally removed: pointer-driven hero
+   frame drift made it look like a loading indicator that could run backwards. */
 
 @media (max-width: 900px) {
   nav { padding: 1rem 1.5rem; } .nav-links { display: none; }
@@ -439,7 +439,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 </nav>
 
 <!-- SCROLLY IMAGE SEQUENCE INTRO -->
-<div id="scrolly-progress"></div>
 <canvas id="pcanvas"></canvas>
 
 <section id="scrolly">
@@ -456,7 +455,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     <!-- white strip exactly under photo bottom edge, positioned by JS -->
     <div id="photo-strip"></div>
 
-    <!-- overlay 1: left — UX/UI + skills -->
+    <!-- overlay 1: desktop left; mobile shared top slot — UX/UI + skills -->
     <div class="st" id="st1">
       <span class="hero-h0">UX/UI</span>
       <span class="hero-h1">Designer</span>
@@ -466,7 +465,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       </div>
     </div>
 
-    <!-- overlay 2: RIGHT — years -->
+    <!-- overlay 2: desktop right; mobile replaces overlay 1 in the same slot -->
     <div class="st" id="st2">
       <span class="hero-h0">14+</span>
       <span class="hero-h1">years</span>

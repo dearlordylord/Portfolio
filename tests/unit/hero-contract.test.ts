@@ -73,17 +73,18 @@ describe("mobile hero contract", () => {
     expect(sampleMobileHeroCues(90)).toEqual({ roleOpacity: 0, experienceOpacity: 1 });
   });
 
-  it("M2 limits overlap to the declared replacement interval", () => {
+  it("M2 never renders both replacement groups at once", () => {
     fc.assert(
       fc.property(fc.double({ min: 0, max: 149, noNaN: true }), (frame) => {
         const cues = sampleMobileHeroCues(frame);
-        if (cues.roleOpacity > 0 && cues.experienceOpacity > 0) {
-          expect(frame).toBeGreaterThanOrEqual(MOBILE_HERO_CONTRACT.experience.fadeIn);
-          expect(frame).toBeLessThanOrEqual(MOBILE_HERO_CONTRACT.role.end);
-        }
+        expect(cues.roleOpacity > 0 && cues.experienceOpacity > 0).toBe(false);
       }),
       { numRuns: 500 },
     );
+    expect(sampleMobileHeroCues(MOBILE_HERO_CONTRACT.role.end)).toEqual({
+      roleOpacity: 0,
+      experienceOpacity: 0,
+    });
   });
 
   it("keeps the canonical mobile stage between 38% and the 85% boundary", () => {

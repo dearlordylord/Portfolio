@@ -359,7 +359,10 @@ test("M1 keeps mobile hero geometry stable through visual-height resize", async 
   test.skip(!testInfo.project.name.includes("mobile"), "M1 is the mobile geometry contract");
   await prepareLocalPage(page);
   await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  // `pauseAt(0)` races the few real milliseconds between install and pause.
+  // No application is loaded yet, so advancing to a safe fixed epoch keeps
+  // this tape deterministic without fast-forwarding application work.
+  await page.clock.pauseAt(60_000);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -368,6 +371,8 @@ test("M1 keeps mobile hero geometry stable through visual-height resize", async 
   const beforeCanvas = before.elements["scrolly-canvas"];
   expect(beforeHero).not.toBeNull();
   expect(beforeCanvas).not.toBeNull();
+  expect(beforeCanvas!.rect.top).toBeGreaterThanOrEqual(beforeHero!.rect.height * 0.35);
+  expect(beforeCanvas!.rect.bottom).toBeCloseTo(beforeHero!.rect.height * 0.85, 1);
 
   await page.setViewportSize({ width: 390, height: 700 });
   await page.clock.runFor(34);
@@ -503,6 +508,15 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(1, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeCloseTo(0, 2);
   expect(current.scenes.hero.phase).toBe("ready");
+  const roleStateRect = current.elements.st1!.rect;
+  const experienceStateRect = current.elements.st2!.rect;
+  const initialCanvasRect = current.elements["scrolly-canvas"]!.rect;
+  expect(roleStateRect.top).toBeCloseTo(experienceStateRect.top, 1);
+  expect(roleStateRect.x + roleStateRect.width / 2).toBeCloseTo(current.viewport.innerWidth / 2, 1);
+  expect(roleStateRect.bottom).toBeLessThanOrEqual(initialCanvasRect.top);
+  const roleScreenshot = await page.screenshot({ animations: "allow" });
+  writeBaseline(testInfo.project.name, "hero-role-state.json", `${JSON.stringify(current, null, 2)}\n`);
+  writeBaseline(testInfo.project.name, "hero-role.png", roleScreenshot);
 
   await page.evaluate(() =>
     window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })),
@@ -513,7 +527,18 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(0, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeGreaterThan(0.95);
   expect(current.scenes.hero.overlays.ctaAvailable).toBe(false);
-  expect(current.elements.st1?.rect.top).toBeCloseTo(current.elements.st2!.rect.top, 1);
+  const roleRect = current.elements.st1!.rect;
+  const experienceRect = current.elements.st2!.rect;
+  const canvasRect = current.elements["scrolly-canvas"]!.rect;
+  expect(roleRect.top).toBeCloseTo(experienceRect.top, 1);
+  expect(roleRect.x + roleRect.width / 2).toBeCloseTo(current.viewport.innerWidth / 2, 1);
+  expect(experienceRect.x + experienceRect.width / 2).toBeCloseTo(current.viewport.innerWidth / 2, 1);
+  expect(roleRect.bottom).toBeLessThanOrEqual(canvasRect.top);
+  expect(experienceRect.bottom).toBeLessThanOrEqual(canvasRect.top);
+  expect(
+    current.scenes.hero.overlays.roleOpacity > 0 &&
+      current.scenes.hero.overlays.experienceOpacity > 0,
+  ).toBe(false);
   const experienceScreenshot = await page.screenshot({ animations: "allow" });
   writeBaseline(testInfo.project.name, "hero-experience-state.json", `${JSON.stringify(current, null, 2)}\n`);
   writeBaseline(testInfo.project.name, "hero-experience.png", experienceScreenshot);

@@ -7,7 +7,7 @@ This is the canonical project note for motion work. Load this file before changi
 ## Product contracts
 
 - **M1 — stable mobile hero:** capture one stable first-screen height; place the animation stage in its lower `38%–85%` region; recompute only for a real orientation or breakpoint change.
-- **M2 — mobile copy sequence:** show the role and experience groups sequentially in one centered slot above the animation. Desktop retains its lateral composition.
+- **M2 — mobile copy sequence:** show the role and experience groups sequentially in one centered slot entirely above the animation. They have zero visual overlap while replacing one another. Desktop retains its lateral composition.
 - **M3 — persistent Explore work:** availability is explicit and latched; the control remains visible, actionable, and at least 44×44 CSS px after it becomes available.
 - **M4 — reliable Tools & Skills:** startup, pause, resize, reduced motion, breakpoint changes, and failed icons are named deterministic states; canvas text and semantic HTML remain available when icons fail.
 

@@ -37,8 +37,7 @@ type HeroElementId =
   | "st2"
   | "noise-top"
   | "explore-cta"
-  | "scroll-hint"
-  | "scrolly-progress";
+  | "scroll-hint";
 
 export type HeroDiagnosticsPort = {
   register(name: string, reader: () => unknown): void;
@@ -252,7 +251,6 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     noiseTop: elementById<HTMLElement>(browserDocument, "noise-top"),
     exploreCTA: elementById<HTMLElement>(browserDocument, "explore-cta"),
     hint: elementById<HTMLElement>(browserDocument, "scroll-hint"),
-    progress: elementById<HTMLElement>(browserDocument, "scrolly-progress"),
   };
   const context = elements.canvas.getContext("2d")!;
   if (!context) throw new Error("Hero scene requires a 2D canvas context");
@@ -587,7 +585,6 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     } else {
       addClass(elements.hint, "gone");
     }
-    elements.progress.style.width = `${clamp(displayFrame / HERO_CONTRACT.endFrame, 0, 1) * 100}%`;
   }
 
   function render(): void {

@@ -34,7 +34,9 @@ export const MOBILE_HERO_CONTRACT = Object.freeze({
   desktopCopyTopRatio: 0.38,
   hintOffset: 62,
   maxCanvasDpr: 2,
-  role: { fadeIn: 5, peak: 14, fadeOut: 48, end: 62 },
+  // Mobile groups occupy one slot. The role reaches zero exactly when the
+  // experience begins, so replacement never renders both groups at once.
+  role: { fadeIn: 5, peak: 14, fadeOut: 48, end: 58 },
   experience: { fadeIn: 58, peak: 72, fadeOut: 128, end: 145 },
   ctaAvailableTargetFrame: 128,
 });
