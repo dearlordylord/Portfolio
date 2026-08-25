@@ -18,7 +18,21 @@ type DiagnosticsSnapshot = {
       exitHoldPending: boolean;
       displayFrame: number;
       targetFrame: number;
-      assets: { introReady: boolean; loaded: number; expected: number };
+      assets: {
+        introReady: boolean;
+        loaded: number;
+        expected: number;
+        degraded: boolean;
+        fallbackCount: number;
+        failedAssets: Array<{ key: string; frame: number | null; phase: string; code: string }>;
+        lastFrameSelection: {
+          requestedFrame: number;
+          renderedFrame: number | null;
+          key: string | null;
+          usedFallback: boolean;
+          reason: string;
+        } | null;
+      };
       geometry: { stableHeight: number; boundary: number; stageTop: number };
       overlays: {
         roleOpacity: number;
@@ -29,10 +43,18 @@ type DiagnosticsSnapshot = {
       };
       canvas: { cssWidth: number; cssHeight: number; backingWidth: number; backingHeight: number };
     };
-    particles: { active: boolean; count: number; pairChecksPerFrame: number; reducedMotion?: boolean };
+    particles: {
+      active: boolean;
+      count: number;
+      pairChecksPerFrame: number;
+      reducedMotion?: boolean;
+      mobileDisabled?: boolean;
+    };
     contact?: { active: boolean; reducedMotion?: boolean; reason?: string };
     timeline?: {
       active: boolean;
+      disabled?: boolean;
+      reason?: string;
       reducedMotion: boolean;
       updateCount: number;
       rowsVisible: number;
@@ -48,7 +70,34 @@ type DiagnosticsSnapshot = {
       seed: number;
       width: number;
       height: number;
+      disabled?: boolean;
+      reason?: string;
+      needsFrame?: boolean;
+      iconAssetsLoaded: number;
+      iconAssetsPending: string[];
+      iconAssetsFailed: string[];
+      assetReadiness: {
+        state: string;
+        degraded: boolean;
+        fallbackCount: number;
+        failedAssets: Array<{ key: string; code: string }>;
+      };
       chips: Array<{ label: string; x: number; y: number; r: number }>;
+    };
+    scheduler: {
+      activeScenes: string[];
+      activeSceneNames: string[];
+      registeredActiveScenes: string[];
+      pendingFrame: boolean;
+      pendingFrameId: number | null;
+      totalTicks: number;
+      sceneTicks: Record<string, number>;
+      hidden: boolean;
+      reducedMotion: boolean;
+      lastTimestampMs: number | null;
+      lastDeltaMs: number;
+      lastFrameDeltaMs: number;
+      disposed: boolean;
     };
   };
 };
@@ -103,7 +152,81 @@ test("normal page does not expose test diagnostics", async ({ page }) => {
     window.requestAnimationFrame = () => 0;
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  expect(await page.evaluate(() => "__portfolioMotion" in window)).toBe(false);
+  expect(
+    await page.evaluate(
+      () => "__portfolioMotion" in window || "__portfolioMotionScheduler" in window,
+    ),
+  ).toBe(false);
+});
+
+test("case overlay opens from data wiring and closes through native controls", async ({ page }) => {
+  await prepareLocalPage(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const card = page.locator('.case-card[data-case-id="fridj"]');
+  await expect(card).toHaveAttribute("data-case-id", "fridj");
+  expect(await card.getAttribute("onclick")).toBeNull();
+  expect(await page.locator("#case-overlay").getAttribute("onclick")).toBeNull();
+
+  await card.click();
+  await expect(page.locator("#case-overlay")).toHaveClass(/open/);
+  await expect(page.locator("#case-title")).toHaveText("Fridgie");
+  await expect(page.locator("#case-subtitle")).toHaveText("Smart food tracker & recipe generator");
+  await expect(page.locator("#case-overlay-tags span")).toHaveCount(3);
+  await expect(page.locator("#case-images img")).toHaveCount(17);
+
+  // Mobile Chromium can keep a fixed/backdrop-filter control in a transient
+  // compositor-stability state while the lazy case images are inserted. Force
+  // only the pointer dispatch; the native close listener and resulting state
+  // assertion remain unchanged.
+  await page.locator("#case-close").click({ force: true });
+  await expect(page.locator("#case-overlay")).not.toHaveClass(/open/);
+
+  await card.click();
+  await page.locator("#case-overlay").evaluate((overlay) => {
+    overlay.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await expect(page.locator("#case-overlay")).not.toHaveClass(/open/);
+});
+
+test("case dialog exposes its labelled semantics and traps Tab focus", async ({ page }) => {
+  await prepareLocalPage(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const card = page.locator('.case-card[data-case-id="fridj"]');
+  await card.click();
+
+  const overlay = page.locator("#case-overlay");
+  await expect(overlay).toHaveAttribute("role", "dialog");
+  await expect(overlay).toHaveAttribute("aria-modal", "true");
+  await expect(overlay).toHaveAttribute("aria-labelledby", "case-title");
+  await expect(overlay).toHaveAttribute("aria-describedby", "case-subtitle");
+  await expect(page.locator("#case-title")).toHaveAttribute("id", "case-title");
+  await expect(page.locator("#case-subtitle")).toHaveAttribute("id", "case-subtitle");
+  await expect(page.locator("#case-close")).toHaveAttribute("aria-label", "Close case study");
+
+  // The real manifest currently has one focusable control. Add a second
+  // focusable probe so both ends of the generic trap are exercised by trusted
+  // Playwright keyboard input.
+  await page.locator("#case-overlay-inner").evaluate((inner) => {
+    const probe = document.createElement("a");
+    probe.id = "case-focus-probe";
+    probe.href = "#case-images";
+    probe.textContent = "Focus probe";
+    inner.append(probe);
+  });
+
+  const close = page.locator("#case-close");
+  const probe = page.locator("#case-focus-probe");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(probe).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(probe).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(close).toBeFocused();
 });
 
 test("hero ready state is deterministic and inspectable", async ({ page }, testInfo) => {
@@ -124,7 +247,18 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
   const current = await snapshot(page);
   expect(current.scenes.hero.phase).toBe("ready");
   expect(current.scenes.hero.assets.loaded).toBeGreaterThanOrEqual(32);
+  expect(current.scenes.hero.assets.fallbackCount).toBeGreaterThanOrEqual(0);
+  expect(Array.isArray(current.scenes.hero.assets.failedAssets)).toBe(true);
+  if (current.scenes.hero.assets.degraded) {
+    expect(current.scenes.hero.assets.failedAssets.length).toBeGreaterThan(0);
+  }
+  if (current.scenes.hero.assets.lastFrameSelection) {
+    const selection = current.scenes.hero.assets.lastFrameSelection;
+    expect(selection.requestedFrame).toBeGreaterThanOrEqual(0);
+    expect(selection.usedFallback).toBe(selection.reason !== "exact");
+  }
   expect(current.scenes.particles).toMatchObject({ active: false, count: 0, pairChecksPerFrame: 0 });
+  expect(current.scenes.scheduler.activeScenes).not.toContain("particles");
   const expectedDpr = Math.min(current.viewport.dpr, 2);
   expect(current.scenes.hero.canvas.backingWidth).toBe(
     Math.round(current.scenes.hero.canvas.cssWidth * expectedDpr),
@@ -146,6 +280,79 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
   });
   writeBaseline(testInfo.project.name, "hero-ready-state.json", stateJson);
   writeBaseline(testInfo.project.name, "hero-ready.png", screenshot);
+});
+
+test("mobile decorative work is excluded from the shared scheduler", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Mobile particle policy is covered by the mobile project");
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=contact", { waitUntil: "domcontentloaded" });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1600);
+  // The adapter keeps one shared-scheduler tick while the ready frame settles.
+  // Advance that bounded interpolation before asserting the scene is idle.
+  await page.clock.runFor(2500);
+  const current = await snapshot(page);
+  expect(current.scenes.particles).toMatchObject({
+    active: false,
+    count: 0,
+    pairChecksPerFrame: 0,
+    mobileDisabled: true,
+  });
+  expect(current.scenes.scheduler.activeScenes).not.toContain("particles");
+  expect(current.scenes.scheduler.activeScenes).not.toContain("hero");
+});
+
+test("an intro frame failure still starts playback and paints fallback copy", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Intro asset failure is covered by the desktop project");
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await page.route("**/frame_005_delay-0.067s.webp", (route) => route.abort());
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+
+  // At roughly 450ms the intro requests the failed frame's neighborhood. The
+  // registry should select a surviving neighbor instead of blanking the canvas.
+  await page.clock.runFor(450);
+  let current = await snapshot(page);
+  expect(current.scenes.hero.phase).toBe("intro");
+  expect(current.scenes.hero.assets.degraded).toBe(true);
+  expect(current.scenes.hero.assets.failedAssets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ key: "frame-005", frame: 5, code: expect.any(String) }),
+    ]),
+  );
+  expect(current.scenes.hero.assets.lastFrameSelection).toEqual(
+    expect.objectContaining({
+      requestedFrame: expect.any(Number),
+      renderedFrame: expect.any(Number),
+      usedFallback: true,
+      reason: "nearest-ready",
+    }),
+  );
+  expect(current.scenes.hero.assets.lastFrameSelection?.requestedFrame).toBeGreaterThan(2);
+  expect(current.scenes.hero.assets.lastFrameSelection?.requestedFrame).toBeLessThan(9);
+  expect(current.scenes.hero.assets.lastFrameSelection?.renderedFrame).not.toBe(5);
+  expect(await canvasHasPaint(page, "#scrolly-canvas")).toBe(true);
+  await expect(page.locator("#st1")).toBeVisible();
+  await expect(page.locator("#st2")).toBeVisible();
+
+  await page.clock.runFor(1200);
+  current = await snapshot(page);
+  expect(current.scenes.hero.phase).toBe("ready");
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  expect((await snapshot(page)).scenes.hero.phase).toBe("playing");
+  await page.clock.runFor(100);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("playing");
 });
 
 test("M1 keeps mobile hero geometry stable through visual-height resize", async ({ page }, testInfo) => {
@@ -205,6 +412,80 @@ test("mobile hero does not cancel native touch scrolling", async ({ page }, test
   expect(defaultPrevented).toBe(false);
 });
 
+test("mobile native scrolling advances over hero and Skills while an offscreen hero stays inert", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Native scroll lifecycle is covered by the mobile project");
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  const heroStart = await page.evaluate(() => window.scrollY);
+  await page.mouse.move(195, 500);
+  await page.mouse.wheel(0, 420);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(heroStart);
+
+  await page.locator("#skillcanvas").scrollIntoViewIfNeeded();
+  const skillsStart = await page.evaluate(() => window.scrollY);
+  const skillsBox = await page.locator("#skillcanvas").boundingBox();
+  expect(skillsBox).not.toBeNull();
+  await page.mouse.move(skillsBox!.x + skillsBox!.width / 2, skillsBox!.y + skillsBox!.height / 2);
+  await page.mouse.wheel(0, 420);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(skillsStart);
+
+  await page.locator("#about").scrollIntoViewIfNeeded();
+  const before = await snapshot(page);
+  const wheelPrevented = await page.locator("#about").evaluate((about) => {
+    let observed: boolean | null = null;
+    const observe = (event: Event) => {
+      observed = event.defaultPrevented;
+    };
+    window.addEventListener("wheel", observe, { once: true });
+    about.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }));
+    return observed;
+  });
+  const after = await snapshot(page);
+  expect(wheelPrevented).toBe(false);
+  expect(after.scenes.hero.phase).toBe(before.scenes.hero.phase);
+  expect(after.scenes.hero.exitHoldPending).toBe(false);
+});
+
+test("hero reports degraded assets and uses the nearest ready frame", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Asset fallback is covered by the desktop project");
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await page.route("**/frame_149_delay-0.067s.webp", (route) => route.abort());
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.degraded, { timeout: 20_000 })
+    .toBe(true);
+
+  let current = await snapshot(page);
+  expect(current.scenes.hero.assets.failedAssets.some((asset) => asset.key === "frame-149")).toBe(true);
+  expect(current.scenes.hero.assets.fallbackCount).toBeGreaterThanOrEqual(0);
+
+  await page.clock.runFor(1600);
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  await page.clock.runFor(3600);
+  current = await snapshot(page);
+  expect(current.scenes.hero.phase).toBe("complete");
+  expect(current.scenes.hero.assets.fallbackCount).toBeGreaterThan(0);
+  const selection = current.scenes.hero.assets.lastFrameSelection;
+  expect(selection).toMatchObject({ usedFallback: true, reason: "nearest-ready" });
+  expect(selection?.requestedFrame).toBeGreaterThan(140);
+  expect(selection?.renderedFrame).toBeGreaterThanOrEqual(0);
+  expect(selection?.renderedFrame).toBeLessThan(149);
+});
+
 test("M2-M3 replace mobile copy then latch Explore work availability", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "M2-M3 are the mobile choreography contract");
   test.setTimeout(120_000);
@@ -221,10 +502,12 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   let current = await snapshot(page);
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(1, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeCloseTo(0, 2);
+  expect(current.scenes.hero.phase).toBe("ready");
 
   await page.evaluate(() =>
     window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })),
   );
+  expect((await snapshot(page)).scenes.scheduler.activeScenes).toContain("hero");
   await page.clock.runFor(1900);
   current = await snapshot(page);
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(0, 2);
@@ -290,8 +573,37 @@ test("hero exit hold is canceled by direct navigation", async ({ page }) => {
   })));
   expect((await snapshot(page)).scenes.hero.phase).toBe("released");
   expect((await snapshot(page)).scenes.hero.exitHoldPending).toBe(false);
+  expect((await snapshot(page)).scenes.scheduler.activeScenes).not.toContain("hero");
   await page.clock.runFor(1000);
   expect(await page.evaluate(() => (window as typeof window & { __testScrollToCalls: number }).__testScrollToCalls)).toBe(0);
+});
+
+test("persisted pagehide keeps the motion app resumable for BFCache", async ({ page }) => {
+  test.setTimeout(60_000);
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+
+  await page.clock.runFor(100);
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+  });
+  expect((await snapshot(page)).scenes.scheduler.hidden).toBe(true);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+  });
+  await page.clock.runFor(100);
+  const restored = await snapshot(page);
+  expect(restored.scenes.scheduler.hidden).toBe(false);
+  expect(restored.scenes.hero.phase).toBe("intro");
+  expect(restored.scenes.scheduler.activeScenes).toContain("hero");
 });
 
 test("Tools & Skills reports whether startup actually occurred", async ({ page }, testInfo) => {
@@ -313,6 +625,13 @@ test("Tools & Skills reports whether startup actually occurred", async ({ page }
   expect(current.scenes.skills.height).toBeGreaterThan(0);
   expect(current.scenes.skills.seed).toBe(20_260_825);
   expect(current.scenes.skills.active).toBe(true);
+  expect(current.scenes.skills.iconAssetsLoaded).toBeGreaterThanOrEqual(0);
+  expect(current.scenes.skills.iconAssetsPending).toEqual(expect.any(Array));
+  expect(current.scenes.skills.iconAssetsFailed).toEqual(expect.any(Array));
+  expect(current.scenes.skills.assetReadiness.fallbackCount).toBeGreaterThanOrEqual(0);
+  if (current.scenes.skills.assetReadiness.degraded) {
+    expect(current.scenes.skills.assetReadiness.failedAssets.length).toBeGreaterThan(0);
+  }
   expect(current.scenes.skills.chips.length).toBeGreaterThan(0);
   for (const chip of current.scenes.skills.chips) {
     expect(Number.isFinite(chip.x)).toBe(true);
@@ -359,12 +678,73 @@ test("Tools & Skills reports whether startup actually occurred", async ({ page }
   expect(await canvasHasPaint(page, "#skillcanvas")).toBe(true);
 });
 
+test("a failed Figma icon reports degradation while canvas and semantic labels remain available", async ({ page }) => {
+  await prepareLocalPage(page);
+  await page.route("**/icon/figma.svg", (route) => route.abort());
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
+    waitUntil: "domcontentloaded",
+  });
+  await page.locator("#skills").scrollIntoViewIfNeeded();
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.skills.started, { timeout: 10_000 })
+    .toBe(true);
+  await page.clock.runFor(1300);
+
+  const current = await snapshot(page);
+  expect(current.scenes.skills.assetReadiness.degraded).toBe(true);
+  expect(current.scenes.skills.iconAssetsFailed).toContain("icon/figma.svg");
+  expect(current.scenes.skills.assetReadiness.failedAssets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ key: "icon/figma.svg", code: expect.any(String) }),
+    ]),
+  );
+  expect(await canvasHasPaint(page, "#skillcanvas")).toBe(true);
+  const semanticFigma = page.locator('#skills ul[aria-label="Tools and skills"] li', { hasText: "Figma" });
+  await expect(semanticFigma).toHaveCount(1);
+  await expect(semanticFigma).toHaveText("Figma");
+});
+
+test("scene isolation names disabled Skills and timeline without scheduler work", async ({ page }) => {
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto(
+    "/?motionDiagnostics=1&motionDisable=hero,particles,contact,skills,timeline",
+    { waitUntil: "domcontentloaded" },
+  );
+
+  const current = await snapshot(page);
+  expect(current.scenes.skills).toMatchObject({
+    started: false,
+    active: false,
+    disabled: true,
+    reason: "disabled-for-scene-isolation",
+    needsFrame: false,
+  });
+  expect(current.scenes.timeline).toMatchObject({
+    active: false,
+    disabled: true,
+    reason: "disabled-for-scene-isolation",
+    updateCount: 0,
+  });
+  expect(current.scenes.scheduler).toMatchObject({
+    activeScenes: [],
+    activeSceneNames: [],
+    pendingFrame: false,
+    totalTicks: 0,
+  });
+  expect(current.scenes.scheduler.sceneTicks.skills).toBe(0);
+  expect(current.scenes.scheduler.sceneTicks.timeline).toBeUndefined();
+});
+
 test("M4 reduced motion renders deterministic static skills without scheduling", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "M4's ten-chip layout is the mobile contract");
   await prepareLocalPage(page);
-  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install({ time: 0 });
   await page.clock.pauseAt(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
     waitUntil: "domcontentloaded",
   });
@@ -383,6 +763,9 @@ test("M4 reduced motion renders deterministic static skills without scheduling",
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.clock.runFor(50);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.skills.mobileModel, { timeout: 5_000 })
+    .toBe(false);
   let desktopReduced = await snapshot(page);
   expect(desktopReduced.scenes.skills).toMatchObject({ active: false, mobileModel: false });
   expect(desktopReduced.scenes.skills.chips.length).toBe(15);
@@ -390,6 +773,9 @@ test("M4 reduced motion renders deterministic static skills without scheduling",
 
   await page.setViewportSize({ width: 390, height: 700 });
   await page.clock.runFor(50);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.skills.mobileModel, { timeout: 5_000 })
+    .toBe(true);
   const mobileReduced = await snapshot(page);
   expect(mobileReduced.scenes.skills).toMatchObject({ active: false, mobileModel: true });
   expect(mobileReduced.scenes.skills.chips.length).toBe(10);
@@ -437,9 +823,9 @@ test("Skills rebuilds its model when crossing the mobile breakpoint", async ({ p
 
 test("whole-page reduced motion keeps essentials and stops decorative loops", async ({ page }) => {
   await prepareLocalPage(page);
-  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install({ time: 0 });
   await page.clock.pauseAt(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?motionDiagnostics=1#skills", { waitUntil: "domcontentloaded" });
 
   const current = await snapshot(page);
@@ -470,6 +856,12 @@ test("whole-page reduced motion keeps essentials and stops decorative loops", as
     fillHeight: "100%",
     cursorTop: "100%",
   });
+  expect(current.scenes.scheduler).toMatchObject({
+    activeScenes: [],
+    pendingFrame: false,
+    reducedMotion: true,
+    hidden: false,
+  });
   await expect(page.locator("#explore-cta a")).toBeVisible();
   expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
 
@@ -484,4 +876,90 @@ test("whole-page reduced motion keeps essentials and stops decorative loops", as
   const skills = await snapshot(page);
   expect(skills.scenes.skills).toMatchObject({ phase: "settled", active: false, reducedMotion: true });
   expect(await canvasHasPaint(page, "#skillcanvas")).toBe(true);
+});
+
+test("reduced-motion interruption cancels exit hold and preserves terminal navigation", async ({ page }) => {
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1600);
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  await page.clock.runFor(3600);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("complete");
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  expect((await snapshot(page)).scenes.hero).toMatchObject({ phase: "exit-hold", exitHoldPending: true });
+
+  const scrollBeforeToggle = await page.evaluate(() => window.scrollY);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(async () => (await snapshot(page)).scenes.hero.reducedMotion).toBe(true);
+  let current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({
+    phase: "reduced",
+    exitHoldPending: false,
+    active: false,
+  });
+  expect(current.scenes.scheduler.activeScenes).not.toContain("hero");
+  await page.clock.runFor(1000);
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBeforeToggle);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("reduced");
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(async () => (await snapshot(page)).scenes.hero.reducedMotion).toBe(false);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({
+    phase: "complete",
+    exitHoldPending: false,
+  });
+  expect(current.scenes.hero.overlays.ctaAvailable).toBe(true);
+});
+
+test("contact schedules only while easing to a new target", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Pointer lifecycle is covered by the desktop project");
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles", { waitUntil: "domcontentloaded" });
+
+  expect((await snapshot(page)).scenes.scheduler.activeScenes).not.toContain("contact");
+  await page.evaluate(() => {
+    document.dispatchEvent(new MouseEvent("mousemove", { clientX: 120, clientY: 140 }));
+  });
+  expect((await snapshot(page)).scenes.scheduler.activeScenes).toContain("contact");
+  await page.clock.runFor(2_000);
+  const settled = await snapshot(page);
+  expect(settled.scenes.contact?.active).toBe(false);
+  expect(settled.scenes.scheduler.activeScenes).not.toContain("contact");
+  expect(settled.scenes.scheduler.pendingFrame).toBe(false);
+});
+
+test("hidden documents pause every scheduler scene", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Visibility lifecycle is covered by the desktop project");
+  await prepareLocalPage(page);
+  await page.clock.install({ time: 0 });
+  await page.clock.pauseAt(0);
+  await page.goto("/?motionDiagnostics=1&motionDisable=hero,contact", { waitUntil: "domcontentloaded" });
+  const before = await snapshot(page);
+  expect(before.scenes.scheduler.activeScenes).toContain("particles");
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const hidden = await snapshot(page);
+  expect(hidden.scenes.scheduler).toMatchObject({ hidden: true, activeScenes: [], pendingFrame: false });
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const visible = await snapshot(page);
+  expect(visible.scenes.scheduler.hidden).toBe(false);
+  expect(visible.scenes.scheduler.activeScenes).toContain("particles");
 });

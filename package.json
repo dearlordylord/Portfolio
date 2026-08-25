@@ -4,21 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "serve": "http-server . -p 4173 -c-1",
+    "serve": "vite --host 127.0.0.1 --port 4173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "bash scripts/run-playwright.sh",
     "test:browser:webkit": "PLAYWRIGHT_WEBKIT=1 bash scripts/run-playwright.sh --project=webkit-mobile-390x844",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "20.19.43",
     "fast-check": "4.9.0",
-    "http-server": "14.1.1",
     "tsx": "4.23.12",
     "typescript": "7.0.2",
+    "vite": "8.2.2",
     "vitest": "4.1.11"
   }
 }
