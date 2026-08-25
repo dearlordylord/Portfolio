@@ -1,0 +1,11 @@
+node_modules/
+.playwright-deps/
+playwright-report/
+test-results/
+motion-artifacts/
+coverage/
+.nyc_output/
+.cache/
+*.log
+.DS_Store
+Thumbs.db

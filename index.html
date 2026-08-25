@@ -15,6 +15,12 @@
   --muted: rgba(26,24,48,0.45);
   --v: #eb0065; --p: #984eff; --b: #9333ea;
   --r: 20px;
+  --hero-stable-h: 100svh;
+  --hero-boundary: 85svh;
+  --hero-overlap: 15svh;
+  --hero-stage-top: 0px;
+  --hero-stage-height: 85svh;
+  --hero-copy-top: 9svh;
 }
 html { scroll-behavior: auto; }
 body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; overflow-x: hidden; overscroll-behavior: none; }
@@ -56,7 +62,7 @@ nav {
 /* ── SHARED SECTION ── */
 section { position: relative; z-index: 1; }
 .sw { max-width: 1100px; margin: 0 auto; padding: 6rem 4rem; }
-#about { margin-top: -15vh; position: relative; z-index: 10; background: #f5f5fa; border-radius: 24px 24px 0 0; box-shadow: 0 -20px 60px rgba(120,100,180,0.08); }
+#about { margin-top: calc(0px - var(--hero-overlap)); position: relative; z-index: 10; background: #f5f5fa; border-radius: 24px 24px 0 0; box-shadow: 0 -20px 60px rgba(120,100,180,0.08); }
 #about .sw { padding-top: 10rem; }
 .stag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--v); margin-bottom: 0.75rem; }
 .stitle { font-family: 'Syne', sans-serif; font-size: clamp(1.9rem, 4vw, 2.8rem); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 1.5rem; }
@@ -294,6 +300,7 @@ section { position: relative; z-index: 1; }
 /* SKILLS */
 #skills .sw { text-align: center; }
 #skillcanvas { width: 100%; height: 520px; display: block; margin-top: 2rem; cursor: default; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
 
 /* CONTACT */
 #contact .sw { text-align: center; max-width: 780px; }
@@ -312,10 +319,9 @@ section { position: relative; z-index: 1; }
 footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb); color: var(--muted); font-size: 0.78rem; position: relative; z-index: 1; }
 
 /* ── SCROLLY IMAGE SEQUENCE ── */
-#scrolly { position: relative; height: 100vh; z-index: 5; }
-#scrolly-sticky { position: relative; height: 100vh; width: 100%; overflow: hidden; background: transparent; }
-/* canvas is 85% of the viewport height on every device */
-#scrolly-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 85vh; display: block; }
+#scrolly { position: relative; height: var(--hero-stable-h); z-index: 5; }
+#scrolly-sticky { position: relative; height: var(--hero-stable-h); width: 100%; overflow: hidden; background: transparent; }
+#scrolly-canvas { position: absolute; top: var(--hero-stage-top); left: 0; width: 100%; height: var(--hero-stage-height); display: block; }
 /* loader */
 #scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
 #scrolly-loader.hidden { opacity: 0; pointer-events: none; }
@@ -329,7 +335,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 /* st2: RIGHT side — "15 years" (she'll look at it) */
 #st2 { right: 6%; top: 38%; transform: translateY(-50%); text-align: right; max-width: 420px; }
 /* explore CTA — sits ON the white strip line, centered */
-#explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 40; opacity: 0; pointer-events: none; white-space: nowrap; top: 100%; }
+#explore-cta { position: absolute; left: 50%; transform: translateX(-50%) translateY(-50%); z-index: 40; opacity: 0; pointer-events: none; white-space: nowrap; top: var(--hero-boundary); }
 /* second noise layer — on top of everything for texture */
 #noise-top { position: absolute; top: 0; left: 0; right: 0; height: 100%; z-index: 21; background: url('Кадры/ШУМ.png') center/cover; mix-blend-mode: multiply; opacity: 0.42; pointer-events: none; }
 /* ── Hero typography scale ─────────────────────────────
@@ -349,9 +355,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 .st-line    { font-family: 'Syne', sans-serif; font-size: clamp(1.5rem, 2.8vw, 2.6rem); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; color: var(--text); }
 .st-sub     { font-size: 0.95rem; color: var(--muted); margin-top: 0.6rem; line-height: 1.6; }
 /* white strip — positioned by JS directly under photo bottom edge */
-#photo-strip { position: absolute; left: 0; right: 0; height: 4px; background: #fff; z-index: 15; pointer-events: none; top: 100%; }
+#photo-strip { position: absolute; left: 0; right: 0; height: 4px; background: #fff; z-index: 15; pointer-events: none; top: var(--hero-boundary); }
 /* scroll hint */
-#scroll-hint { position: absolute; top: 85vh; left: 50%; transform: translateX(-50%); z-index: 41; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.8s; pointer-events: none; }
+#scroll-hint { position: absolute; top: calc(var(--hero-boundary) + 62px); left: 50%; transform: translateX(-50%); z-index: 41; display: flex; flex-direction: column; align-items: center; gap: 8px; opacity: 1; transition: opacity 0.8s; pointer-events: none; }
 #scroll-hint.gone { opacity: 0; }
 .scroll-hint-label { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 .scroll-hint-arrow { width: 22px; height: 22px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); animation: arrowBounce 1.5s ease-in-out infinite; }
@@ -374,17 +380,15 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #st2 { right: 4%; max-width: 55%; }
 }
 @media (max-width: 768px) {
-  /* Same desktop layout, stacked vertically so the two overlays don't collide */
-  /* st1: top, centered above the head */
-  #st1 {
+  /* Both copy groups share one stable top slot and replace one another. */
+  #st1, #st2 {
     left: 0; right: 0;
-    top: 9vh; transform: none;
+    top: var(--hero-copy-top); transform: none;
     max-width: 100%; width: 100%;
     text-align: center;
     padding: 0 4%;
+    display: block;
   }
-  /* st2: hidden on mobile — no room, it collided with the About section */
-  #st2 { display: none; }
   /* H0: UX/UI · 14+ */
   .hero-h0, .role-accent, .years-num {
     font-size: clamp(2.2rem, 11vw, 3.6rem) !important;
@@ -404,6 +408,16 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #photo-strip { z-index: 25 !important; }
   /* Case overlay full-width on small screens */
   #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
+}
+
+/* Reduced motion is a whole-page policy: preserve the content and controls,
+   but remove decorative keyframes and transition work everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }
 </style>
 </head>
@@ -719,6 +733,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     <span class="stag">Toolkit</span>
     <h2 class="stitle">Tools & skills</h2>
     <canvas id="skillcanvas"></canvas>
+    <ul class="sr-only" aria-label="Tools and skills">
+      <li>Figma</li><li>UX Research</li><li>Prototyping</li><li>Design Systems</li>
+      <li>User Testing</li><li>Motion Design</li><li>AI Generation</li><li>Photoshop</li>
+      <li>Illustrator</li><li>InDesign</li><li>HTML &amp; CSS</li><li>Miro</li>
+      <li>Brainstorm</li><li>Typography</li><li>UI Design</li>
+    </ul>
   </div>
 </section>
 
@@ -755,6 +775,91 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 </div>
 
 <script>
+// Read-only diagnostics are enabled only for local/test URLs with ?motionDiagnostics=1.
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var hostname = window.location.hostname;
+  var loopback = hostname === 'localhost' || hostname === '127.0.0.1' ||
+    hostname === '::1' || hostname === '[::1]';
+  if (!loopback || !params.has('motionDiagnostics')) return;
+  var disabledScenes = new Set(
+    (params.get('motionDisable') || '')
+      .split(',').map(function(value) { return value.trim(); }).filter(Boolean)
+  );
+  var readers = Object.create(null);
+  var trackedIds = [
+    'scrolly', 'scrolly-canvas', 'st1', 'st2', 'explore-cta', 'scroll-hint',
+    'about', 'skills', 'skillcanvas', 'contact'
+  ];
+
+  function elementSnapshot(id) {
+    var element = document.getElementById(id);
+    if (!element) return null;
+    var box = element.getBoundingClientRect();
+    var style = getComputedStyle(element);
+    return {
+      rect: {
+        x: box.x, y: box.y, width: box.width, height: box.height,
+        top: box.top, right: box.right, bottom: box.bottom, left: box.left
+      },
+      style: {
+        display: style.display, visibility: style.visibility, opacity: style.opacity,
+        pointerEvents: style.pointerEvents, position: style.position,
+        transform: style.transform, overflow: style.overflow
+      }
+    };
+  }
+
+  window.__portfolioMotion = {
+    version: 1,
+    register: function(name, reader) {
+      if (typeof name !== 'string' || typeof reader !== 'function') return;
+      readers[name] = reader;
+    },
+    isDisabled: function(name) { return disabledScenes.has(name); },
+    snapshot: function() {
+      var scenes = {};
+      Object.keys(readers).forEach(function(name) {
+        try { scenes[name] = readers[name](); }
+        catch (error) { scenes[name] = { error: String(error) }; }
+      });
+      return {
+        version: 1,
+        capturedAt: performance.now(),
+        viewport: {
+          innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+          dpr: window.devicePixelRatio || 1,
+          visual: window.visualViewport ? {
+            width: window.visualViewport.width, height: window.visualViewport.height,
+            offsetTop: window.visualViewport.offsetTop, offsetLeft: window.visualViewport.offsetLeft,
+            scale: window.visualViewport.scale
+          } : null
+        },
+        scroll: { x: window.scrollX, y: window.scrollY },
+        elements: Object.fromEntries(trackedIds.map(function(id) { return [id, elementSnapshot(id)]; })),
+        animations: document.getAnimations().map(function(animation) {
+          var effect = animation.effect;
+          var target = effect && effect.target;
+          var timing = effect && effect.getComputedTiming ? effect.getComputedTiming() : null;
+          return {
+            id: animation.id || null,
+            target: target ? (target.id || target.className || target.tagName) : null,
+            playState: animation.playState,
+            currentTime: typeof animation.currentTime === 'number' ? animation.currentTime : null,
+            timing: timing ? {
+              delay: timing.delay, duration: timing.duration, iterations: timing.iterations,
+              progress: timing.progress, currentIteration: timing.currentIteration
+            } : null
+          };
+        }),
+        scenes: scenes
+      };
+    }
+  };
+})();
+</script>
+
+<script>
 // ═══════════════════════════════════════
 //   SCROLLY IMAGE SEQUENCE
 // ═══════════════════════════════════════
@@ -771,22 +876,56 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   const st2 = document.getElementById('st2');
   const exploreCTA = document.getElementById('explore-cta');
 
+  if (window.__portfolioMotion && window.__portfolioMotion.isDisabled('hero')) {
+    loader.classList.add('hidden');
+    window.__portfolioMotion.register('hero', function() { return { phase: 'disabled-for-scene-isolation' }; });
+    return;
+  }
+
   let images = new Array(TOTAL);
   let loaded = 0;
   let targetFrame = 0;
   let displayFrame = 0;
   let mouseYNorm = 0.5;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ── noise PNG overlay ──
   const noiseImg = new Image();
   noiseImg.src = 'Кадры/ШУМ.png';
 
+  let stableHeroHeight = null;
+  let mobileGeometry = null;
+  function syncHeroGeometry(force) {
+    const isMobile = window.innerWidth <= 768;
+    if (force || mobileGeometry !== isMobile || stableHeroHeight === null || !isMobile) {
+      stableHeroHeight = window.innerHeight;
+      mobileGeometry = isMobile;
+    }
+    const boundary = stableHeroHeight * 0.85;
+    const stageTop = isMobile ? stableHeroHeight * 0.38 : 0;
+    const root = document.documentElement.style;
+    root.setProperty('--hero-stable-h', stableHeroHeight + 'px');
+    root.setProperty('--hero-boundary', boundary + 'px');
+    root.setProperty('--hero-overlap', (stableHeroHeight - boundary) + 'px');
+    root.setProperty('--hero-stage-top', stageTop + 'px');
+    root.setProperty('--hero-stage-height', (boundary - stageTop) + 'px');
+    root.setProperty('--hero-copy-top', (stableHeroHeight * 0.09) + 'px');
+  }
+
   function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = Math.round(window.innerHeight * 0.85);
+    syncHeroGeometry(false);
+    const bounds = canvas.getBoundingClientRect();
+    const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+    canvas.width  = Math.round(bounds.width * dpr);
+    canvas.height = Math.round(bounds.height * dpr);
     draw(displayFrame);
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function() {
+    syncHeroGeometry(true);
+    resize();
+  });
+  syncHeroGeometry(true);
   resize();
 
   function draw(idx) {
@@ -795,13 +934,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     if (!img || !img.complete || !img.naturalWidth) return;
     const cw = canvas.width, ch = canvas.height;
     const iw = img.naturalWidth, ih = img.naturalHeight;
-    const isMobDraw = cw <= 768;
+    const isMobDraw = window.innerWidth <= 768;
     const s = Math.max(cw / iw, ch / ih) * (isMobDraw ? 0.55 : 0.59);
     const w = iw * s, h = ih * s;
-    // photo is bottom-anchored inside the 85vh canvas on every device
+    // Photo is bottom-anchored inside the declared stage.
     const yPos = ch - h;
-    // canvas bottom edge = boundary between hero and About
-    const photoBottom = ch;
+    const photoBottom = stableHeroHeight * 0.85;
     const strip = document.getElementById('photo-strip');
     if (strip) strip.style.top = photoBottom + 'px';
     // noise overlay covers exactly the canvas area
@@ -887,6 +1025,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
         allReady = true;
         if (!introReady) { introReady = true; loader.classList.add('hidden'); }
       }
+      if (reducedMotion) draw(i);
     };
     img.onerror = () => { loaded++; };
     images[i] = img;
@@ -912,24 +1051,74 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   // 2 = rest auto-playing (INTRO_F → END_F)      [triggered by scroll]
   // 3 = done at END_F                             [waits for scroll → About]
   // 4 = going to About (listeners released)
-  let heroPhase  = 0;
+  let heroPhase  = reducedMotion ? 4 : 0;
   let phaseStartT = null;
+  let ctaAvailable = reducedMotion;
+  let exitHoldTimer = null;
   const INTRO_MS = 1400; // intro duration ms
   const FULL_MS  = 3500; // full rest duration ms
   const DRIFT    = 8;    // pointer drift frames around INTRO_F
 
+  if (window.__portfolioMotion) {
+    window.__portfolioMotion.register('hero', function() {
+      const phases = ['intro', 'ready', 'playing', 'complete', 'released'];
+      return {
+        phase: reducedMotion ? 'reduced' : (heroPhase === 3.5 ? 'exit-hold' : (phases[heroPhase] || String(heroPhase))),
+        active: !reducedMotion,
+        autoplay: !reducedMotion,
+        reducedMotion: reducedMotion,
+        exitHoldPending: exitHoldTimer !== null,
+        phaseStartTime: phaseStartT,
+        targetFrame: targetFrame,
+        displayFrame: displayFrame,
+        renderedFrame: Math.max(0, Math.min(TOTAL - 1, Math.round(displayFrame))),
+        pointerYNormalized: mouseYNorm,
+        geometry: {
+          stableHeight: stableHeroHeight,
+          boundary: stableHeroHeight * 0.85,
+          stageTop: window.innerWidth <= 768 ? stableHeroHeight * 0.38 : 0
+        },
+        assets: { loaded: loaded, expected: EXPECTED, introReady: introReady, allReady: allReady },
+        overlays: {
+          roleOpacity: Number(st1.style.opacity || 0),
+          experienceOpacity: Number(st2.style.opacity || 0),
+          ctaAvailable: ctaAvailable,
+          ctaOpacity: Number(exploreCTA.style.opacity || 0),
+          ctaPointerEvents: exploreCTA.style.pointerEvents || 'none'
+        },
+        canvas: {
+          cssWidth: canvas.getBoundingClientRect().width,
+          cssHeight: canvas.getBoundingClientRect().height,
+          backingWidth: canvas.width,
+          backingHeight: canvas.height
+        }
+      };
+    });
+  }
+
   function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
 
   function updateOverlays(df) {
-    // st1 (UX/UI Designer): fades in during intro, stays visible
-    st1.style.opacity = frameOp(df, 5, 14, 125, 145);
-    // st2 (14+ years): also appears during intro so both are visible at pause
-    st2.style.opacity = frameOp(df, 18, 28, 128, 145);
-    const b = Math.max(0, Math.min(1, (df - 112) / 8));
-    exploreCTA.style.opacity = b;
-    exploreCTA.style.pointerEvents = b > 0.5 ? 'all' : 'none';
+    const isMobile = window.innerWidth <= 768;
+    if (reducedMotion) {
+      // Reduced motion keeps all essential copy and the primary action available
+      // without waiting for the image sequence or a decorative frame loop.
+      st1.style.opacity = 1;
+      st2.style.opacity = 1;
+      ctaAvailable = true;
+    } else if (isMobile) {
+      // Mobile copy follows elapsed-time target progress, not refresh-rate-dependent display lag.
+      st1.style.opacity = frameOp(targetFrame, 5, 14, 48, 62);
+      st2.style.opacity = frameOp(targetFrame, 58, 72, 128, 145);
+    } else {
+      st1.style.opacity = frameOp(df, 5, 14, 125, 145);
+      st2.style.opacity = frameOp(df, 18, 28, 128, 145);
+    }
+    if (!ctaAvailable && heroPhase >= 2 && targetFrame >= 128) ctaAvailable = true;
+    exploreCTA.style.opacity = ctaAvailable ? 1 : 0;
+    exploreCTA.style.pointerEvents = ctaAvailable ? 'all' : 'none';
     // Hint: show only when paused and waiting for user input
-    if (heroPhase === 1 || heroPhase === 3)
+    if (!reducedMotion && (heroPhase === 1 || heroPhase === 3))
       hint.classList.remove('gone');
     else
       hint.classList.add('gone');
@@ -937,7 +1126,18 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     progBar.style.width = (Math.min(df / END_F, 1) * 100) + '%';
   }
 
+  if (reducedMotion) {
+    targetFrame = END_F;
+    displayFrame = END_F;
+    loader.classList.add('hidden');
+    updateOverlays(END_F);
+  }
+
   function releaseHero() {
+    if (exitHoldTimer !== null) {
+      clearTimeout(exitHoldTimer);
+      exitHoldTimer = null;
+    }
     if (heroPhase >= 4) return;
     heroPhase = 4;
     window.removeEventListener('wheel',     onHeroWheel);
@@ -949,7 +1149,9 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   function goToAbout() {
     if (heroPhase !== 3) return;
     heroPhase = 3.5;            // still < 4, so native scroll stays blocked
-    setTimeout(function() {
+    exitHoldTimer = setTimeout(function() {
+      exitHoldTimer = null;
+      if (heroPhase !== 3.5) return;
       releaseHero();
       const about = document.getElementById('about');
       if (about) window.scrollTo({ top: about.offsetTop, behavior: 'smooth' });
@@ -975,7 +1177,6 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   window.addEventListener('touchstart', e => { _ty = e.touches[0].clientY; }, { passive: true });
   function onHeroTouch(e) {
     if (heroPhase >= 4) return;
-    e.preventDefault(); // block native scroll/overscroll while hero is active
     const y  = e.touches[0].clientY;
     const dy = _ty - y;
     // touch also drives the pointer drift during the pause (like mouse on desktop)
@@ -989,12 +1190,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       goToAbout();
     }
   }
-  window.addEventListener('touchmove', onHeroTouch, { passive: false });
+  window.addEventListener('touchmove', onHeroTouch, { passive: true });
 
-  // Release if user navigates away (nav links etc.)
-  window.addEventListener('scroll', function() {
-    if (window.scrollY > window.innerHeight * 0.4 && heroPhase < 4) releaseHero();
-  }, { passive: true });
+  // Direct navigation bypasses the hero phases without coupling release to ordinary scrolling.
+  document.querySelectorAll('nav a').forEach(function(link) {
+    link.addEventListener('click', releaseHero);
+  });
   exploreCTA.addEventListener('click', function() { releaseHero(); });
 
   // ── Animation loop ──
@@ -1030,7 +1231,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     draw(displayFrame);
     requestAnimationFrame(animLoop);
   }
-  requestAnimationFrame(animLoop);
+  if (!reducedMotion) requestAnimationFrame(animLoop);
 })();
 
 // ═══════════════════════════════════════
@@ -1039,6 +1240,22 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 (function() {
   const canvas = document.getElementById('pcanvas');
   const ctx    = canvas.getContext('2d');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (reducedMotion || (window.__portfolioMotion && window.__portfolioMotion.isDisabled('particles'))) {
+    if (window.__portfolioMotion) {
+      window.__portfolioMotion.register('particles', function() {
+        return {
+          active: false,
+          count: 0,
+          pairChecksPerFrame: 0,
+          reducedMotion: reducedMotion,
+          reason: reducedMotion ? 'prefers-reduced-motion' : 'disabled-for-scene-isolation'
+        };
+      });
+    }
+    return;
+  }
 
   let W, H, particles, mouse = { x: -9999, y: -9999 };
   const COUNT = 440;
@@ -1101,6 +1318,12 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   function init() { particles = Array.from({ length: COUNT }, () => new Particle()); }
   init();
 
+  if (window.__portfolioMotion) {
+    window.__portfolioMotion.register('particles', function() {
+      return { active: true, count: particles.length, pairChecksPerFrame: COUNT * (COUNT - 1) / 2, width: W, height: H };
+    });
+  }
+
   function drawLines() {
     const MAX = 90;
     for (let i = 0; i < particles.length; i++) {
@@ -1159,28 +1382,69 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     { label: 'UI Design',      svg: 'icon/ui.svg',             r: 54 },
   ];
 
+  var SKILLS_SEED = 20260825;
+  var randomState = SKILLS_SEED >>> 0;
+  function seededRandom() {
+    randomState = (randomState + 0x6D2B79F5) >>> 0;
+    var value = randomState;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  }
+
   // preload all SVG icons
   var svgImages = {};
+  var svgFailures = [];
   (function() {
     SKILLS.forEach(function(sk) {
       var img = new Image();
       img.onload = function() { svgImages[sk.svg] = img; };
+      img.onerror = function() { svgFailures.push(sk.svg); };
       img.src = sk.svg;
     });
   })();
 
   var W, H, chips;
+  var modelIsMobile = null;
   var mouse = { x: -9999, y: -9999 };
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function resize() {
-    var dpr = window.devicePixelRatio || 1;
+    var oldW = W || 0, oldH = H || 0;
+    var isMobile = window.innerWidth <= 768;
+    var crossedBreakpoint = modelIsMobile !== null && modelIsMobile !== isMobile;
+    modelIsMobile = isMobile;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.offsetWidth;
-    H = window.innerWidth <= 768 ? 440 : 520;
+    H = isMobile ? 440 : 520;
     canvas.width  = W * dpr;
     canvas.height = H * dpr;
     canvas.style.width  = W + 'px';
     canvas.style.height = H + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (crossedBreakpoint && chips) {
+      // The mobile and desktop models intentionally have different chip
+      // counts/scales. Rebuild from the same seed instead of stretching one
+      // model across the breakpoint.
+      init();
+      if (reducedMotion) {
+        active = false;
+        skillsPhase = 'settled';
+        renderSkills();
+      } else if (active) {
+        skillsPhase = 'entering';
+        lastNow = null;
+        requestSkillsFrame();
+      }
+      return;
+    }
+    if (chips && oldW > 0 && oldH > 0) {
+      chips.forEach(function(chip) {
+        chip.x = Math.max(chip.r, Math.min(W - chip.r, chip.x * W / oldW));
+        chip.y = Math.max(chip.r, Math.min(H - chip.r, chip.y * H / oldH));
+      });
+    }
+    renderSkills();
   }
 
   var exploding = false;
@@ -1189,6 +1453,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 
   function init() {
     resize();
+    randomState = SKILLS_SEED >>> 0;
     var mob  = window.innerWidth <= 768;
     var list = mob ? SKILLS.slice(0, 10) : SKILLS;
     var sc   = mob ? 0.80 : 1.22;
@@ -1198,23 +1463,24 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     chips = list.map(function(sk, i) {
       var r   = Math.round(sk.r * sc);
       var col = i % cols, row = Math.floor(i / cols);
-      var tx  = (col + 0.5 + (Math.random()-0.5)*0.5) * (W / cols);
-      var ty  = (row + 0.5 + (Math.random()-0.5)*0.5) * (H / rows);
+      var tx  = (col + 0.5 + (seededRandom()-0.5)*0.5) * (W / cols);
+      var ty  = (row + 0.5 + (seededRandom()-0.5)*0.5) * (H / rows);
       tx = Math.max(r, Math.min(W-r, tx));
       ty = Math.max(r, Math.min(H-r, ty));
       // direction from center to target
       var dx = tx - cx, dy = ty - cy;
       var dist = Math.sqrt(dx*dx + dy*dy) || 1;
-      var spd  = 5 + Math.random() * 4;
+      var spd  = 5 + seededRandom() * 4;
       return {
         label: sk.label, svg: sk.svg, r: r,
-        x: cx, y: cy,                         // start at center
-        vx: dx/dist * spd, vy: dy/dist * spd, // burst outward
+        x: reducedMotion ? tx : cx, y: reducedMotion ? ty : cy,
+        vx: reducedMotion ? 0 : dx/dist * spd, vy: reducedMotion ? 0 : dy/dist * spd,
         get mass() { return this.r * this.r; }
       };
     });
-    exploding = true;
+    exploding = !reducedMotion;
     explodeStart = performance.now();
+    renderSkills();
   }
 
   function drawChip(c) {
@@ -1279,6 +1545,14 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     ctx.restore();
   }
 
+  // Resizing replaces the canvas backing store and clears it. Always repaint
+  // the current model, including when the scene is paused or reduced-motion.
+  function renderSkills() {
+    if (!chips || !W || !H) return;
+    ctx.clearRect(0, 0, W, H);
+    chips.forEach(drawChip);
+  }
+
   function resolveCollision(a, b) {
     var dx = b.x-a.x, dy = b.y-a.y, d = Math.sqrt(dx*dx+dy*dy), minD = a.r+b.r;
     if (d >= minD || d < 0.01) return;
@@ -1291,19 +1565,26 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     b.vx -= imp*a.mass*nx; b.vy -= imp*a.mass*ny;
   }
 
-  function loop(now) {
-    if (!chips || !W) { requestAnimationFrame(loop); return; }
-    ctx.clearRect(0, 0, W, H);
+  var active = false;
+  var skillsPhase = 'idle';
+  var lastNow = null;
+  var accumulator = 0;
+  var simulationMs = 0;
+  var FIXED_STEP = 1000 / 60;
+  var framePending = false;
 
-    // after explosion phase ends, switch to normal physics
-    if (exploding && now - explodeStart > EXPLODE_DUR) exploding = false;
-
+  function stepPhysics() {
+    simulationMs += FIXED_STEP;
+    if (exploding && simulationMs > EXPLODE_DUR) {
+      exploding = false;
+      skillsPhase = 'running';
+    }
     chips.forEach(function(c) {
       if (!exploding) {
         // normal: gentle gravity + drift
         c.vy += 0.01;
-        c.vx += (Math.random()-0.5)*0.01;
-        c.vy += (Math.random()-0.5)*0.01;
+        c.vx += (seededRandom()-0.5)*0.01;
+        c.vy += (seededRandom()-0.5)*0.01;
         // mouse repulsion
         var dx = c.x-mouse.x, dy = c.y-mouse.y, d = Math.sqrt(dx*dx+dy*dy);
         var range = c.r * 4.2;
@@ -1327,9 +1608,26 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
     for (var i=0; i<chips.length; i++)
       for (var j=i+1; j<chips.length; j++)
         resolveCollision(chips[i], chips[j]);
+  }
 
-    chips.forEach(drawChip);
+  function requestSkillsFrame() {
+    if (!active || framePending) return;
+    framePending = true;
     requestAnimationFrame(loop);
+  }
+
+  function loop(now) {
+    framePending = false;
+    if (!active || !chips || !W) return;
+    if (lastNow === null) lastNow = now;
+    accumulator += Math.min(100, Math.max(0, now - lastNow));
+    lastNow = now;
+    while (accumulator >= FIXED_STEP) {
+      stepPhysics();
+      accumulator -= FIXED_STEP;
+    }
+    renderSkills();
+    requestSkillsFrame();
   }
 
   canvas.addEventListener('mousemove', function(e) {
@@ -1337,22 +1635,79 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   });
   canvas.addEventListener('mouseleave', function() { mouse.x=-9999; mouse.y=-9999; });
   canvas.addEventListener('touchmove', function(e) {
-    e.preventDefault(); var r=canvas.getBoundingClientRect();
+    var r=canvas.getBoundingClientRect();
     mouse.x=e.touches[0].clientX-r.left; mouse.y=e.touches[0].clientY-r.top;
-  }, { passive: false });
+  }, { passive: true });
   canvas.addEventListener('touchend', function() { mouse.x=-9999; mouse.y=-9999; });
   window.addEventListener('resize', function() { resize(); });
 
   // start only when section scrolls into view
   var started = false;
+  var skillsVisible = false;
+  function enterSkills() {
+    skillsVisible = true;
+      if (!started) {
+        started = true;
+        init();
+        simulationMs = 0;
+      }
+      if (reducedMotion) {
+        active = false;
+        skillsPhase = 'settled';
+        renderSkills();
+      } else {
+        active = true;
+        skillsPhase = exploding ? 'entering' : 'running';
+        lastNow = null;
+        requestSkillsFrame();
+      }
+  }
   var skillsObs = new IntersectionObserver(function(entries) {
-    if (entries[0].isIntersecting && !started) {
-      started = true;
-      init();
-      requestAnimationFrame(loop);
+    skillsVisible = entries[0].isIntersecting;
+    if (entries[0].isIntersecting) {
+      enterSkills();
+    } else if (started) {
+      active = false;
+      skillsPhase = reducedMotion ? 'settled' : 'paused';
     }
   }, { threshold: 0.1 });
   skillsObs.observe(canvas);
+  if (window.location.hash === '#skills') enterSkills();
+  window.addEventListener('hashchange', function() {
+    if (window.location.hash === '#skills') enterSkills();
+  });
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      active = false;
+      if (started) skillsPhase = reducedMotion ? 'settled' : 'paused';
+    } else if (started && skillsVisible && !reducedMotion) {
+      active = true;
+      skillsPhase = exploding ? 'entering' : 'running';
+      lastNow = null;
+      requestSkillsFrame();
+    }
+  });
+
+  if (window.__portfolioMotion) {
+    window.__portfolioMotion.register('skills', function() {
+      return {
+        started: started,
+        phase: skillsPhase,
+        active: active,
+        reducedMotion: reducedMotion,
+        mobileModel: modelIsMobile,
+        seed: SKILLS_SEED,
+        width: W || 0,
+        height: H || 0,
+        iconAssetsLoaded: Object.keys(svgImages).length,
+        iconAssetsFailed: svgFailures.slice(),
+        expectedIcons: SKILLS.length,
+        chips: chips ? chips.map(function(chip) {
+          return { label: chip.label, x: chip.x, y: chip.y, vx: chip.vx, vy: chip.vy, r: chip.r };
+        }) : []
+      };
+    });
+  }
 })();
 
 // ═══════════════════════════════════════
@@ -1377,9 +1732,37 @@ document.querySelectorAll('.pcard,.tcard,.case-card').forEach(el => {
   var cursor = section.querySelector('.tl-cursor');
   var rows   = Array.prototype.slice.call(section.querySelectorAll('.tl-row'));
   var spine  = section.querySelector('.tl-spine');
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var updateCount = 0;
+
+  function registerDiagnostics() {
+    if (!window.__portfolioMotion) return;
+    window.__portfolioMotion.register('timeline', function() {
+      return {
+        active: !reducedMotion,
+        reducedMotion: reducedMotion,
+        updateCount: updateCount,
+        rowsVisible: rows.filter(function(row) { return row.classList.contains('visible'); }).length,
+        fillHeight: fill ? fill.style.height : '',
+        cursorTop: cursor ? cursor.style.top : ''
+      };
+    });
+  }
+
+  registerDiagnostics();
+
+  if (reducedMotion) {
+    // Timeline copy is essential content. Expose the settled state once and
+    // avoid scroll/resize listeners and timers that would mutate it later.
+    rows.forEach(function(row) { row.classList.add('visible'); });
+    if (fill) fill.style.height = '100%';
+    if (cursor) cursor.style.top = '100%';
+    return;
+  }
 
   function update() {
     if (!spine) return;
+    updateCount += 1;
     var sr = spine.getBoundingClientRect();
     var vh = window.innerHeight;
 
@@ -1502,6 +1885,19 @@ document.addEventListener('keydown', function(e) {
 (function() {
   var el = document.getElementById('ctitle-3d');
   if (!el) return;
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reducedMotion || (window.__portfolioMotion && window.__portfolioMotion.isDisabled('contact'))) {
+    if (window.__portfolioMotion) {
+      window.__portfolioMotion.register('contact', function() {
+        return {
+          active: false,
+          reducedMotion: reducedMotion,
+          reason: reducedMotion ? 'prefers-reduced-motion' : 'disabled-for-scene-isolation'
+        };
+      });
+    }
+    return;
+  }
 
   var MAX_RY = 14, MAX_RX = 9; // max degrees
   var tx = 0, ty = 0, cx = 0, cy = 0;
