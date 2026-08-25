@@ -133,6 +133,14 @@ async function prepareLocalPage(page: Page): Promise<void> {
   await page.route("https://fonts.gstatic.com/**", (route) => route.abort());
 }
 
+async function installPausedClock(page: Page): Promise<void> {
+  await page.clock.install({ time: 0 });
+  // Pausing at the installation timestamp races the real milliseconds between
+  // the two protocol calls. No application is loaded yet, so advancing to a
+  // fixed safe epoch pauses deterministically without advancing app work.
+  await page.clock.pauseAt(60_000);
+}
+
 function writeBaseline(projectName: string, name: string, body: Buffer | string): void {
   if (process.env.WRITE_MOTION_BASELINE !== "1") return;
   const directory = path.resolve(
@@ -234,8 +242,7 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -285,8 +292,7 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
 test("mobile decorative work is excluded from the shared scheduler", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile particle policy is covered by the mobile project");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=contact", { waitUntil: "domcontentloaded" });
   await expect
     .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
@@ -311,8 +317,7 @@ test("an intro frame failure still starts playback and paints fallback copy", as
   test.setTimeout(120_000);
   await prepareLocalPage(page);
   await page.route("**/frame_005_delay-0.067s.webp", (route) => route.abort());
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -358,11 +363,7 @@ test("an intro frame failure still starts playback and paints fallback copy", as
 test("M1 keeps mobile hero geometry stable through visual-height resize", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "M1 is the mobile geometry contract");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  // `pauseAt(0)` races the few real milliseconds between install and pause.
-  // No application is loaded yet, so advancing to a safe fixed epoch keeps
-  // this tape deterministic without fast-forwarding application work.
-  await page.clock.pauseAt(60_000);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -385,8 +386,7 @@ test("M1 keeps mobile hero geometry stable through visual-height resize", async 
 test("mobile hero does not cancel native touch scrolling", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Touch scrolling is covered by mobile projects");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -420,8 +420,7 @@ test("mobile hero does not cancel native touch scrolling", async ({ page }, test
 test("mobile native scrolling advances over hero and Skills while an offscreen hero stays inert", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Native scroll lifecycle is covered by the mobile project");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -462,8 +461,7 @@ test("hero reports degraded assets and uses the nearest ready frame", async ({ p
   test.setTimeout(120_000);
   await prepareLocalPage(page);
   await page.route("**/frame_149_delay-0.067s.webp", (route) => route.abort());
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -495,8 +493,7 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   test.skip(!testInfo.project.name.includes("mobile"), "M2-M3 are the mobile choreography contract");
   test.setTimeout(120_000);
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -508,6 +505,7 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(1, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeCloseTo(0, 2);
   expect(current.scenes.hero.phase).toBe("ready");
+  await expect(page.locator("#st-reduced")).toBeHidden();
   const roleStateRect = current.elements.st1!.rect;
   const experienceStateRect = current.elements.st2!.rect;
   const initialCanvasRect = current.elements["scrolly-canvas"]!.rect;
@@ -563,8 +561,7 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
 test("hero exit hold is canceled by direct navigation", async ({ page }) => {
   test.setTimeout(120_000);
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -606,8 +603,7 @@ test("hero exit hold is canceled by direct navigation", async ({ page }) => {
 test("persisted pagehide keeps the motion app resumable for BFCache", async ({ page }) => {
   test.setTimeout(60_000);
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -633,8 +629,7 @@ test("persisted pagehide keeps the motion app resumable for BFCache", async ({ p
 
 test("Tools & Skills reports whether startup actually occurred", async ({ page }, testInfo) => {
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
     waitUntil: "domcontentloaded",
   });
@@ -706,8 +701,7 @@ test("Tools & Skills reports whether startup actually occurred", async ({ page }
 test("a failed Figma icon reports degradation while canvas and semantic labels remain available", async ({ page }) => {
   await prepareLocalPage(page);
   await page.route("**/icon/figma.svg", (route) => route.abort());
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
     waitUntil: "domcontentloaded",
   });
@@ -733,8 +727,7 @@ test("a failed Figma icon reports degradation while canvas and semantic labels r
 
 test("scene isolation names disabled Skills and timeline without scheduler work", async ({ page }) => {
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto(
     "/?motionDiagnostics=1&motionDisable=hero,particles,contact,skills,timeline",
     { waitUntil: "domcontentloaded" },
@@ -767,8 +760,7 @@ test("scene isolation names disabled Skills and timeline without scheduler work"
 test("M4 reduced motion renders deterministic static skills without scheduling", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "M4's ten-chip layout is the mobile contract");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
     waitUntil: "domcontentloaded",
@@ -820,8 +812,7 @@ test("M4 reduced motion renders deterministic static skills without scheduling",
 test("Skills rebuilds its model when crossing the mobile breakpoint", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Breakpoint crossing starts from the desktop project");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact#skills", {
     waitUntil: "domcontentloaded",
   });
@@ -847,9 +838,9 @@ test("Skills rebuilds its model when crossing the mobile breakpoint", async ({ p
 });
 
 test("whole-page reduced motion keeps essentials and stops decorative loops", async ({ page }) => {
+  test.setTimeout(120_000);
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?motionDiagnostics=1#skills", { waitUntil: "domcontentloaded" });
 
@@ -888,6 +879,16 @@ test("whole-page reduced motion keeps essentials and stops decorative loops", as
     hidden: false,
   });
   await expect(page.locator("#explore-cta a")).toBeVisible();
+  if (current.viewport.innerWidth <= 768) {
+    await expect(page.locator("#st1")).toBeHidden();
+    await expect(page.locator("#st2")).toBeHidden();
+    await expect(page.locator("#st-reduced")).toBeVisible();
+    const reducedCopy = current.elements["st-reduced"]?.rect;
+    const reducedCanvas = current.elements["scrolly-canvas"]?.rect;
+    expect(reducedCopy).not.toBeNull();
+    expect(reducedCanvas).not.toBeNull();
+    expect(reducedCopy!.bottom).toBeLessThanOrEqual(reducedCanvas!.top);
+  }
   expect(await page.evaluate(() => document.getAnimations().length)).toBe(0);
 
   const timelineBeforeScroll = current.scenes.timeline;
@@ -906,8 +907,7 @@ test("whole-page reduced motion keeps essentials and stops decorative loops", as
 test("reduced-motion interruption cancels exit hold and preserves terminal navigation", async ({ page }) => {
   test.setTimeout(120_000);
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
@@ -948,8 +948,7 @@ test("reduced-motion interruption cancels exit hold and preserves terminal navig
 test("contact schedules only while easing to a new target", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Pointer lifecycle is covered by the desktop project");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles", { waitUntil: "domcontentloaded" });
 
   expect((await snapshot(page)).scenes.scheduler.activeScenes).not.toContain("contact");
@@ -967,8 +966,7 @@ test("contact schedules only while easing to a new target", async ({ page }, tes
 test("hidden documents pause every scheduler scene", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Visibility lifecycle is covered by the desktop project");
   await prepareLocalPage(page);
-  await page.clock.install({ time: 0 });
-  await page.clock.pauseAt(0);
+  await installPausedClock(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=hero,contact", { waitUntil: "domcontentloaded" });
   const before = await snapshot(page);
   expect(before.scenes.scheduler.activeScenes).toContain("particles");

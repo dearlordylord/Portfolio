@@ -330,6 +330,7 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
 .loader-bar-fill { height: 100%; background: linear-gradient(90deg, #eb0065, #984eff); width: 0%; transition: width 0.12s; border-radius: 2px; }
 /* text overlays */
 .st { position: absolute; z-index: 10; pointer-events: none; opacity: 0; will-change: opacity; }
+#st-reduced { display: none; }
 /* st1: left side — UX/UI + skills */
 #st1 { left: 6%; top: 38%; transform: translateY(-50%); max-width: 400px; }
 /* st2: RIGHT side — "15 years" (she'll look at it) */
@@ -410,6 +411,19 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
 }
 
+/* Sequential copy has no animated equivalent under reduced motion. Present
+   the same information once in a compact shared slot instead of overlapping
+   the two absolute groups. */
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  #st1, #st2 { display: none; }
+  #st-reduced {
+    display: block;
+    left: 0; right: 0; top: var(--hero-copy-top);
+    width: 100%; max-width: 100%; padding: 0 4%;
+    text-align: center; opacity: 1;
+  }
+}
+
 /* Reduced motion is a whole-page policy: preserve the content and controls,
    but remove decorative keyframes and transition work everywhere. */
 @media (prefers-reduced-motion: reduce) {
@@ -470,6 +484,17 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
       <span class="hero-h0">14+</span>
       <span class="hero-h1">years</span>
       <div class="st-line-sm">turning ideas<br>into experiences</div>
+      <div class="st-sub">Dating · GameFi · Crypto · Brand</div>
+    </div>
+
+    <!-- Static, non-overlapping mobile copy when motion is reduced. -->
+    <div class="st" id="st-reduced">
+      <span class="hero-h0">UX/UI</span>
+      <span class="hero-h1">Designer · 14+ years</span>
+      <div class="st-skills-list">
+        <span>UX Research · User Flows · Prototyping · Figma</span>
+        <span>Turning ideas into experiences</span>
+      </div>
       <div class="st-sub">Dating · GameFi · Crypto · Brand</div>
     </div>
 

@@ -108,6 +108,7 @@ export const DEFAULT_TRACKED_MOTION_ELEMENT_IDS = [
   "scrolly-canvas",
   "st1",
   "st2",
+  "st-reduced",
   "explore-cta",
   "scroll-hint",
   "about",
