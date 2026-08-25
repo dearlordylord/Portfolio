@@ -32,7 +32,6 @@ export const CASE_PROJECTS = {
       "Проекты/Fridj/Slise_11.png",
       "Проекты/Fridj/Slise_12.png",
       "Проекты/Fridj/Slise_13.png",
-      "Проекты/Fridj/Slise_14.png",
       "Проекты/Fridj/Slice_14.png",
       "Проекты/Fridj/Slice_15.png",
       "Проекты/Fridj/Slice_17.png",
@@ -68,9 +67,9 @@ export const CASE_PROJECTS = {
     desc: "DNA of the clothing brand",
     tags: ["Branding", "Identity", "Fashion"],
     images: [
-      "Проекты/UNNO_eng/Экран1.png",
-      "Проекты/UNNO_eng/Экран2.png",
-      "Проекты/UNNO_eng/Экран3.png",
+      "Проекты/UNNO_eng/screen_1.jpg",
+      "Проекты/UNNO_eng/screen_2.jpg",
+      "Проекты/UNNO_eng/screen_3.jpg",
     ],
   },
   restfood: {

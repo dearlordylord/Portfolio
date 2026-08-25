@@ -377,13 +377,19 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function syncGeometry(force: boolean): void {
-    const mobile = browserWindow.innerWidth <= HERO_BREAKPOINT;
+    // Size the backing store from the canvas' layout viewport, not innerWidth:
+    // desktop scrollbar gutters can otherwise make the bitmap wider than its
+    // CSS box and introduce a subtle horizontal squeeze.
+    const width = Math.max(
+      1,
+      finiteOr(browserDocument.documentElement.clientWidth || browserWindow.innerWidth, 1),
+    );
+    const mobile = width <= HERO_BREAKPOINT;
     const orientationChanged = lastMobile !== null && lastMobile !== mobile;
     if (force || orientationChanged || stableHeight === null || !mobile) {
       stableHeight = Math.max(1, finiteOr(browserWindow.innerHeight, 1));
     }
     lastMobile = mobile;
-    const width = Math.max(1, finiteOr(browserWindow.innerWidth, 1));
     const visualHeight = Math.max(
       1,
       finiteOr(browserWindow.visualViewport?.height ?? browserWindow.innerHeight, stableHeight),
@@ -418,6 +424,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
     elements.canvas.width = Math.max(1, layout.backingStore.width);
     elements.canvas.height = Math.max(1, layout.backingStore.height);
+    context.setTransform(effectiveDpr, 0, 0, effectiveDpr, 0, 0);
     elements.photoStrip.style.top = `${layout.boundary.top}px`;
     elements.exploreCTA.style.top = `${layout.ctaAnchor.y}px`;
     elements.hint.style.top = `${layout.hintAnchor.y}px`;
@@ -508,8 +515,11 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function draw(requestedFrame: number): void {
     if (disposed) return;
-    const cw = Math.max(1, elements.canvas.width);
-    const ch = Math.max(1, elements.canvas.height);
+    // All layout and painting uses CSS pixels. DPR only affects the backing
+    // store transform established in syncGeometry(), preventing narrow mobile
+    // canvases from composing at 2x coordinates and then being squeezed down.
+    const cw = Math.max(1, heroLayout?.canvas.width ?? canvasRect().width);
+    const ch = Math.max(1, heroLayout?.canvas.height ?? canvasRect().height);
     drawBackdrop(cw, ch);
     const selection = registry.selectFrame(clamp(requestedFrame, HERO_CONTRACT.startFrame, HERO_CONTRACT.endFrame));
     const image = selection.key ? images.get(selection.key) : undefined;
@@ -521,10 +531,16 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     context.fillStyle = "#ffffff";
     const firstSize = Math.min(cw * 0.17, 230);
     context.font = `800 ${firstSize}px Syne, sans-serif`;
+    const firstWidth = context.measureText("IRINA").width;
+    const fittedFirstSize = firstWidth > cw * 0.9 ? firstSize * ((cw * 0.9) / firstWidth) : firstSize;
+    context.font = `800 ${fittedFirstSize}px Syne, sans-serif`;
     context.globalAlpha = 0.92;
     context.fillText("IRINA", cw / 2, ch * (isMobile ? 0.71 : 0.47));
     const secondSize = Math.min(cw * 0.093, 128);
     context.font = `800 ${secondSize}px Syne, sans-serif`;
+    const secondWidth = context.measureText("IVASHCHENKO").width;
+    const fittedSecondSize = secondWidth > cw * 0.9 ? secondSize * ((cw * 0.9) / secondWidth) : secondSize;
+    context.font = `800 ${fittedSecondSize}px Syne, sans-serif`;
     context.fillText("IVASHCHENKO", cw / 2, ch * (isMobile ? 0.88 : 0.66));
     context.restore();
 

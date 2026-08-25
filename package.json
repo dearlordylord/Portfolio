@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:browser": "bash scripts/run-playwright.sh",
     "test:browser:webkit": "PLAYWRIGHT_WEBKIT=1 bash scripts/run-playwright.sh --project=webkit-mobile-390x844",
-    "check": "npm run typecheck && npm test && npm run build"
+    "verify:dist": "node scripts/verify-dist-assets.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run verify:dist"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

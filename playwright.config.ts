@@ -16,9 +16,14 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm run serve",
+    // Exercise the deployable output. The dev server can resolve source-root
+    // runtime assets that are absent from dist and would hide broken releases.
+    command: "npm run build && npm run verify:dist && npm run preview",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
+    timeout: 180_000,
+    // Never accept an unrelated dev server on this port: these tests are the
+    // release gate for the exact production build created above.
+    reuseExistingServer: false,
   },
   projects: [
     {

@@ -31,7 +31,7 @@ npm run check
 npm run test:browser
 ```
 
-`npm run check` performs strict type checking, unit/property tests, and a production build. The browser suite covers Chromium mobile and desktop scenarios for M1–M4, scheduler lifecycle, reduced motion, asset degradation, breakpoint changes, native scrolling, diagnostics isolation, and the case dialog.
+`npm run check` performs strict type checking, unit/property tests, a production build, and an exact runtime-asset inventory/size check. The browser suite builds and previews `dist` rather than using Vite's source-serving development mode, so missing deployment assets fail before release. It covers Chromium mobile and desktop scenarios for M1–M4, scheduler lifecycle, reduced motion, asset degradation, breakpoint changes, native scrolling, diagnostics isolation, narrow-width containment, and the case dialog.
 
 Mobile WebKit is configured as an opt-in project, but this workstation lacks its required host libraries. Run `npm run test:browser:webkit` in CI or on a host with those libraries before release. Headless Chromium evidence is not a substitute for final real-device performance and visual review.
 

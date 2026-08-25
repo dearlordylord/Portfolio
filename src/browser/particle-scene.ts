@@ -142,6 +142,10 @@ function readDimension(
   fallback: number,
 ): number {
   if (positiveFinite(explicit)) return explicit;
+  // This adapter owns a fixed full-viewport background. Its previous inline
+  // canvas size is stale after a viewport resize, so the live window dimension
+  // must win over the element's current rectangle/client size.
+  if (positiveFinite(windowValue)) return windowValue;
   let measured: number | undefined;
   try {
     const rect = canvas.getBoundingClientRect();
@@ -153,7 +157,6 @@ function readDimension(
     const candidate = property === "width" ? canvas.clientWidth : canvas.clientHeight;
     measured = positiveFinite(candidate) ? candidate : undefined;
   }
-  if (!positiveFinite(measured) && positiveFinite(windowValue)) measured = windowValue;
   if (!positiveFinite(measured)) {
     const backing = property === "width" ? canvas.width : canvas.height;
     measured = positiveFinite(backing) ? backing : undefined;
@@ -209,14 +212,14 @@ export function mountParticleScene(options: ParticleSceneOptions): ParticleScene
       options.width,
       canvas,
       "width",
-      ownerWindow?.innerWidth,
+      ownerDocument?.documentElement.clientWidth || ownerWindow?.innerWidth,
       DEFAULT_WIDTH,
     );
     const height = readDimension(
       options.height,
       canvas,
       "height",
-      ownerWindow?.innerHeight,
+      ownerDocument?.documentElement.clientHeight || ownerWindow?.innerHeight,
       DEFAULT_HEIGHT,
     );
     return { width, height, mobile: width <= PARTICLE_BREAKPOINT };

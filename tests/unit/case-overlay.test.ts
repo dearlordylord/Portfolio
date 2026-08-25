@@ -2,6 +2,7 @@ import {
   CASE_PROJECTS,
   encodeCaseImagePath,
 } from "../../src/browser/case-overlay";
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("case overlay manifest", () => {
@@ -13,9 +14,15 @@ describe("case overlay manifest", () => {
 
   it("retains the complete project manifest used by the page", () => {
     expect(Object.keys(CASE_PROJECTS)).toEqual(["fridj", "beehive", "unno", "restfood"]);
-    expect(CASE_PROJECTS.fridj.images).toHaveLength(17);
+    expect(CASE_PROJECTS.fridj.images).toHaveLength(16);
     expect(CASE_PROJECTS.beehive.images).toHaveLength(18);
     expect(CASE_PROJECTS.unno.images).toHaveLength(3);
     expect(CASE_PROJECTS.restfood.images).toHaveLength(7);
+  });
+
+  it("references only source assets that can be copied into production", () => {
+    const paths = Object.values(CASE_PROJECTS).flatMap((project) => project.images);
+    expect(paths.filter((assetPath) => !existsSync(assetPath))).toEqual([]);
+    expect(new Set(paths).size).toBe(paths.length);
   });
 });

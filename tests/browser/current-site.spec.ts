@@ -20,6 +20,7 @@ type DiagnosticsSnapshot = {
       targetFrame: number;
       assets: {
         introReady: boolean;
+        allReady: boolean;
         loaded: number;
         expected: number;
         degraded: boolean;
@@ -47,6 +48,11 @@ type DiagnosticsSnapshot = {
       active: boolean;
       count: number;
       pairChecksPerFrame: number;
+      cssWidth: number;
+      cssHeight: number;
+      dpr: number;
+      backingWidth: number;
+      backingHeight: number;
       reducedMotion?: boolean;
       mobileDisabled?: boolean;
     };
@@ -181,7 +187,15 @@ test("case overlay opens from data wiring and closes through native controls", a
   await expect(page.locator("#case-title")).toHaveText("Fridgie");
   await expect(page.locator("#case-subtitle")).toHaveText("Smart food tracker & recipe generator");
   await expect(page.locator("#case-overlay-tags span")).toHaveCount(3);
-  await expect(page.locator("#case-images img")).toHaveCount(17);
+  await expect(page.locator("#case-images img")).toHaveCount(16);
+  await expect
+    .poll(async () => page.locator("#case-images img").evaluateAll((images) => images.every((image) => (image as HTMLImageElement).complete)))
+    .toBe(true);
+  expect(
+    await page.locator("#case-images img").evaluateAll((images) =>
+      images.filter((image) => (image as HTMLImageElement).naturalWidth === 0).map((image) => (image as HTMLImageElement).src),
+    ),
+  ).toEqual([]);
 
   // Mobile Chromium can keep a fixed/backdrop-filter control in a transient
   // compositor-stability state while the lazy case images are inserted. Force
@@ -289,6 +303,30 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
   writeBaseline(testInfo.project.name, "hero-ready.png", screenshot);
 });
 
+test("production runtime assets are served without hero degradation", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "One production asset-catalog tape is sufficient");
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", { waitUntil: "domcontentloaded" });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.allReady, { timeout: 30_000 })
+    .toBe(true);
+  const hero = (await snapshot(page)).scenes.hero;
+  expect(hero.assets).toMatchObject({ expected: 150, loaded: 150, degraded: false });
+  expect(hero.assets.failedAssets).toEqual([]);
+
+  for (const path of [
+    "/Кадры/frame_000_delay-0.067s.webp",
+    "/icon/figma.svg",
+    "/Проекты/Fridj/Slice_1.png",
+    "/Проекты/UNNO_eng/screen_1.jpg",
+  ]) {
+    const response = await page.request.get(path);
+    expect(response.ok(), `${path} should be present in the deployable output`).toBe(true);
+    expect((await response.body()).byteLength).toBeGreaterThan(0);
+  }
+});
+
 test("mobile decorative work is excluded from the shared scheduler", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile particle policy is covered by the mobile project");
   await prepareLocalPage(page);
@@ -381,6 +419,122 @@ test("M1 keeps mobile hero geometry stable through visual-height resize", async 
   expect(after.scenes.hero.geometry.stableHeight).toBe(before.scenes.hero.geometry.stableHeight);
   expect(after.elements.scrolly?.rect.height).toBeCloseTo(beforeHero!.rect.height, 1);
   expect(after.elements["scrolly-canvas"]?.rect.height).toBeCloseTo(beforeCanvas!.rect.height, 1);
+});
+
+test("mobile scrolly and About backgrounds never exceed the live viewport width", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "This is the mobile width-sweep contract");
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=contact", { waitUntil: "domcontentloaded" });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1600);
+
+  for (const width of [430, 390, 375, 360, 340, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.clock.runFor(34);
+    const report = await page.evaluate(() => {
+      const rect = (id: string) => {
+        const value = document.getElementById(id)?.getBoundingClientRect();
+        return value ? { left: value.left, right: value.right, width: value.width } : null;
+      };
+      const rects = (selector: string) =>
+        [...document.querySelectorAll<HTMLElement>(selector)].map((element) => {
+          const value = element.getBoundingClientRect();
+          return { selector, left: value.left, right: value.right, width: value.width };
+        });
+      return {
+        innerWidth,
+        rootClientWidth: document.documentElement.clientWidth,
+        rootScrollWidth: document.documentElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        scrolly: rect("scrolly"),
+        sticky: rect("scrolly-sticky"),
+        heroCanvas: rect("scrolly-canvas"),
+        heroTransform: (() => {
+          const canvas = document.getElementById("scrolly-canvas") as HTMLCanvasElement | null;
+          const matrix = canvas?.getContext("2d")?.getTransform();
+          return matrix ? { a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d, e: matrix.e, f: matrix.f } : null;
+        })(),
+        about: rect("about"),
+        particles: rect("pcanvas"),
+        heroLayers: [
+          "scrolly-loader",
+          "st1",
+          "st2",
+          "explore-cta",
+          "scroll-hint",
+          "photo-strip",
+          "noise-top",
+        ].map(rect),
+        responsiveContent: rects("#about .sw, .pgrid, .pcard, #ctitle-3d"),
+      };
+    });
+    const diagnostics = await snapshot(page);
+    expect(report.rootScrollWidth).toBeLessThanOrEqual(report.rootClientWidth);
+    expect(report.bodyScrollWidth).toBeLessThanOrEqual(report.rootClientWidth);
+    for (const element of [
+      report.scrolly,
+      report.sticky,
+      report.heroCanvas,
+      report.about,
+      report.particles,
+      ...report.heroLayers,
+    ]) {
+      expect(element).not.toBeNull();
+      expect(element!.left).toBeGreaterThanOrEqual(-1);
+      expect(element!.right).toBeLessThanOrEqual(report.innerWidth + 1);
+      expect(element!.width).toBeLessThanOrEqual(report.innerWidth + 1);
+    }
+    for (const element of report.responsiveContent) {
+      expect(element.left, `${element.selector} projects left of the viewport`).toBeGreaterThanOrEqual(-1);
+      expect(element.right, `${element.selector} projects right of the viewport`).toBeLessThanOrEqual(
+        report.innerWidth + 1,
+      );
+    }
+    expect(diagnostics.scenes.hero.canvas.cssWidth).toBe(width);
+    expect(diagnostics.scenes.hero.canvas.backingWidth).toBe(
+      Math.round(width * Math.min(diagnostics.viewport.dpr, 2)),
+    );
+    expect(report.heroTransform).toEqual({
+      a: Math.min(diagnostics.viewport.dpr, 2),
+      b: 0,
+      c: 0,
+      d: Math.min(diagnostics.viewport.dpr, 2),
+      e: 0,
+      f: 0,
+    });
+  }
+});
+
+test("desktop particle canvas tracks live viewport and DPR without coordinate squeeze", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Particles are intentionally disabled on mobile");
+  await prepareLocalPage(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=hero,contact", { waitUntil: "domcontentloaded" });
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 1280, height: 760 },
+    { width: 1024, height: 700 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(async () => (await snapshot(page)).scenes.particles.cssWidth).toBe(viewport.width);
+    const current = await snapshot(page);
+    const effectiveDpr = Math.min(current.viewport.dpr, 2);
+    expect(current.scenes.particles).toMatchObject({
+      cssWidth: viewport.width,
+      cssHeight: viewport.height,
+      dpr: effectiveDpr,
+      backingWidth: Math.round(viewport.width * effectiveDpr),
+      backingHeight: Math.round(viewport.height * effectiveDpr),
+    });
+    const transform = await page.locator("#pcanvas").evaluate((element) => {
+      const matrix = (element as HTMLCanvasElement).getContext("2d")?.getTransform();
+      return matrix ? { a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d, e: matrix.e, f: matrix.f } : null;
+    });
+    expect(transform).toEqual({ a: effectiveDpr, b: 0, c: 0, d: effectiveDpr, e: 0, f: 0 });
+  }
 });
 
 test("mobile hero does not cancel native touch scrolling", async ({ page }, testInfo) => {
@@ -504,6 +658,8 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   let current = await snapshot(page);
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(1, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeCloseTo(0, 2);
+  expect(current.elements.st1?.style).toMatchObject({ display: "block", visibility: "visible", opacity: "1" });
+  expect(current.elements.st2?.style.opacity).toBe("0");
   expect(current.scenes.hero.phase).toBe("ready");
   await expect(page.locator("#st-reduced")).toBeHidden();
   const roleStateRect = current.elements.st1!.rect;
@@ -524,6 +680,8 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   current = await snapshot(page);
   expect(current.scenes.hero.overlays.roleOpacity).toBeCloseTo(0, 2);
   expect(current.scenes.hero.overlays.experienceOpacity).toBeGreaterThan(0.95);
+  expect(current.elements.st1?.style.opacity).toBe("0");
+  expect(current.elements.st2?.style).toMatchObject({ display: "block", visibility: "visible", opacity: "1" });
   expect(current.scenes.hero.overlays.ctaAvailable).toBe(false);
   const roleRect = current.elements.st1!.rect;
   const experienceRect = current.elements.st2!.rect;
