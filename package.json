@@ -11,6 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "bash scripts/run-playwright.sh",
+    "inspect:motion": "MOTION_INSPECTION=1 bash scripts/run-playwright.sh --project=chromium-mobile-390x844 --grep='capture deterministic visual convergence report'",
+    "inspect:motion:compare": "tsx scripts/compare-motion-inspection.ts",
+    "inspect:motion:device": "tsx scripts/merge-device-inspection.ts",
     "test:browser:webkit": "PLAYWRIGHT_WEBKIT=1 bash scripts/run-playwright.sh --project=webkit-mobile-390x844",
     "verify:dist": "node scripts/verify-dist-assets.mjs",
     "check": "npm run typecheck && npm test && npm run build && npm run verify:dist"

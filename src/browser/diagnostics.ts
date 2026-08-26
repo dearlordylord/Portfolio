@@ -91,6 +91,8 @@ export type MotionDiagnosticsOptions = Readonly<{
   queryParameter?: string;
   /** Defaults to `motionDisable`. Values are comma-separated scene names. */
   disabledQueryParameter?: string;
+  /** Dev-only composition may explicitly permit a phone/LAN hostname. */
+  allowNonLoopback?: boolean;
   /** IDs captured in every snapshot. */
   trackedElementIds?: readonly string[];
 }>;
@@ -235,7 +237,7 @@ export function setupMotionDiagnostics(options: MotionDiagnosticsOptions = {}): 
 
   // Clear a stale hot-reload surface before returning.  The page must never
   // leave diagnostics exposed after either side of the gate is removed.
-  if (!isLoopbackHostname(ownerWindow.location.hostname)) {
+  if (!isLoopbackHostname(ownerWindow.location.hostname) && options.allowNonLoopback !== true) {
     delete globalWindow.__portfolioMotion;
     return undefined;
   }

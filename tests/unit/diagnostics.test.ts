@@ -77,4 +77,9 @@ describe("setupMotionDiagnostics", () => {
     expect(diagnostics?.isDisabled("contact")).toBe(true);
     expect(diagnostics?.isDisabled("particles")).toBe(false);
   });
+
+  it("allows an explicit dev-only non-loopback inspection host", () => {
+    const ownerWindow = fakeWindow("phone-preview.example", "?motionDiagnostics=1");
+    expect(setupMotionDiagnostics({ window: ownerWindow, allowNonLoopback: true })).toBeDefined();
+  });
 });

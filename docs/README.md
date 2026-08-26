@@ -1,6 +1,6 @@
 # Motion and responsive-layout index
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 This is the canonical project note for motion work. Load this file before changing animation timing, responsive geometry, canvas behavior, or mobile input. Historical research was removed after its durable conclusions moved into the implementation and tests.
 
@@ -35,6 +35,45 @@ npm run test:browser
 
 Mobile WebKit is configured as an opt-in project, but this workstation lacks its required host libraries. Run `npm run test:browser:webkit` in CI or on a host with those libraries before release. Headless Chromium evidence is not a substitute for final real-device performance and visual review.
 
+## Visual convergence workflow
+
+No animation or responsive-layout fix starts from a screenshot alone. Before implementation:
+
+1. define a named checkpoint and numerical acceptance metric in `src/motion/visual-inspection.ts`;
+2. capture the current state with `npm run inspect:motion`;
+3. review `motion-artifacts/inspection-current/mobile-390x844/index.html` and its JSON observations;
+4. classify each claim as `met`, `unmet`, or `inconclusive`—never convert unavailable evidence into a pass;
+5. run a read-only methodology review before using the metric as a fix gate; and
+6. after implementation, rerun the identical checkpoints and require the intended metric to converge without regressing the others.
+
+The capture sequence is fixed: role → experience → terminal → below hero → timeline → return to hero. Playwright seeks times derived from the shared hero contract, then asserts the named phase and rendered frame. CSS-only transitions are fast-forwarded at screenshot time; JavaScript animation state remains at the recorded checkpoint. R2 samples eight fixed named edge points (top, upper, middle, and lower pairs) from the actual unmasked rendered composite at role, experience, and terminal. Points stay above the overlapping About surface; the 36px patches are centered on canonical normalized coordinates and reject known foreground controls/text while retaining structural `#scrolly`/canvas ownership. Each completed run has a unique manifest (commit, working-tree hash, browser, viewport, fonts, and configuration) and is promoted atomically to `inspection-current`; failed runs cannot replace it.
+
+Before accepting a metric as a fix gate, capture it twice. The normalized observations and findings must match; screenshots are review aids and may only differ within an explicitly understood raster tolerance. Generated artifacts are disposable and ignored. Once an issue is closed, preserve its contract in source/tests and delete obsolete runs.
+
+Use `npm run inspect:motion:compare` to make that repeatability check explicit. It compares the default `inspection-current/mobile-390x844` directory with its `.previous` promotion (or accepts current and previous directories as the first and second arguments). `findings.json` must be byte-identical and parsed findings must also be semantically identical. For `observations.json`, object keys are sorted, array order is preserved, and every finite number is rounded to the nearest `0.001` before recursive comparison; non-finite values are left unchanged. The command prints JSON paths for up to 20 differences and exits nonzero on a missing file, findings byte/semantic difference, or normalized observation difference.
+
+### Real mobile browser chrome
+
+Address-bar/tool-bar behavior is not emulated evidence. R1 therefore remains `inconclusive` in Chromium until a real-device sample is recorded. For a phone on the development network:
+
+1. run `npm run serve -- --host 0.0.0.0`;
+2. open the dev URL with `?motionDiagnostics=1`;
+3. record screenshots with browser chrome expanded and collapsed; and
+4. in remote devtools, call `window.__portfolioVisualProbe()` and save the result beside those screenshots (outside the non-ignored workspace inputs, or in an ignored directory);
+5. create the versioned envelope defined by `DeviceEvidenceEnvelope` in `scripts/merge-device-inspection.ts`; include the current synthetic run ID/commit/diff hash, phone/browser/viewport data, the probe and hero snapshot, and both screenshot paths, SHA-256 hashes, curtain verdicts, and timestamps; and
+6. run `npm run inspect:motion:device -- path/to/device-evidence.json` to produce device-qualified findings without overwriting the synthetic baseline. The importer rejects a stale synthetic manifest when the commit or tracked/untracked input hash changed, copies both screenshots into an atomic ignored sidecar under the current run, and stores relative sidecar paths in the merged observation. Device evidence changes R1 only; R2–R4 remain synthetic-only.
+
+Viewport inset math is context, not the R1 verdict: browser chrome naturally changes the visual viewport. Only paired real-device screenshots with an explicit curtain review can move R1 from `inconclusive` to `met` or `unmet`.
+
+Non-loopback diagnostics are enabled only in Vite development builds and still require the query flag. Production builds retain the loopback-only gate.
+
+### Current report vocabulary
+
+- **R1:** paired expanded/collapsed real-device browser-chrome screenshots; viewport inset is context only. Current synthetic status: `inconclusive`.
+- **R2:** whole first-screen background continuity from eight fixed named, background-only screenshot patch averages over the `#scrolly` surface above the overlapping About section; high-frequency texture is averaged. Current status: `unmet` (actual composite spread).
+- **R3:** semantic “14+ years” text, terminal phase, display/visibility/opacity, nonzero geometry, viewport/clipping/occlusion, plus immediate/500ms/2000ms return samples. Current status: `unmet` (opacity ≈0.24 throughout).
+- **R4:** minimum rendered left edge of the section header, every year, and every timeline body versus the shared 24px gutter; decorative spine/dots are excluded. Current status: `unmet` (minimum −14px; several year labels protrude).
+
 ## Repository and evidence policy
 
 Durable knowledge belongs in source, tests, narrowly scoped comments, and this index. Generated evidence is disposable and ignored:
@@ -44,7 +83,7 @@ Durable knowledge belongs in source, tests, narrowly scoped comments, and this i
 - `test-results/`
 - `coverage/` and local caches/logs
 
-Do not check generated screenshots, traces, state dumps, browser binaries, or OS metadata into the repository. Keep a temporary research note only while a genuine unimplemented decision depends on it; at phase completion, move its requirements into tests/code, update this index, and delete the note.
+Do not check generated screenshots, traces, state dumps, browser binaries, or OS metadata into the repository. Keep a real-device envelope and its source screenshots outside the non-ignored workspace inputs (or under an ignored directory); the importer copies validated images into the ignored run sidecar. Keep a temporary research note only while a genuine unimplemented decision depends on it; at phase completion, move its requirements into tests/code, update this index, and delete the note.
 
 ## Remaining external validation
 

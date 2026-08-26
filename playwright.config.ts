@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/browser",
+  timeout: process.env.MOTION_INSPECTION === "1" ? 300_000 : 30_000,
   outputDir: "./test-results",
   // The current page runs a 440-particle all-pairs loop. Parallel browser pages
   // distort the very mobile baseline this harness is intended to characterize.

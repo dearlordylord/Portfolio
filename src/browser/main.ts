@@ -11,12 +11,14 @@ import {
 import { mountPageEffects } from "./page-effects";
 import { mountParticleScene } from "./particle-scene";
 import { mountSkillsScene } from "./skills-scene";
+import { registerVisualInspection } from "./visual-inspection";
 
 // Keep startup order explicit: the opt-in inspection surface must exist before
 // any scene registers its reader, and every scene must receive the same frame
 // owner and reduced-motion lifecycle.
-const motionDiagnostics = setupMotionDiagnostics();
+const motionDiagnostics = setupMotionDiagnostics({ allowNonLoopback: import.meta.env.DEV });
 const unregisterSchedulerDiagnostics = registerSchedulerDiagnostics(motionDiagnostics);
+const unregisterVisualInspection = registerVisualInspection(motionDiagnostics);
 
 const reducedMotionLifecycle = onReducedMotionChange;
 
@@ -76,6 +78,7 @@ const cleanup = (): void => {
   particleScene?.destroy();
   heroScene.dispose();
   unregisterSchedulerDiagnostics();
+  unregisterVisualInspection();
   disposeMotionLifecycle();
 };
 
