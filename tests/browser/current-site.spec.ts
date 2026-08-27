@@ -853,6 +853,167 @@ test("completed playback retains terminal experience copy through normal exit", 
   await expect(page.locator("#st2")).toContainText("14+");
 });
 
+test("mobile terminal copy never blinks while completion exits and releases", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Terminal copy persistence is a mobile presentation contract");
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+
+  await page.clock.runFor(1_600);
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+
+  type CopySample = {
+    tag: "transition" | "return";
+    phase: string;
+    playbackCompleted: boolean;
+    modelOpacity: number;
+    computedOpacity: number;
+    visible: boolean;
+    width: number;
+    height: number;
+    text: string;
+    inViewport: boolean;
+  };
+
+  // Sample inside the browser at each fake-vsync quantum. This keeps the
+  // rendered seam dense without paying a protocol round-trip per frame, and
+  // reads phase/latch/model opacity from the same public diagnostics object.
+  await page.clock.runFor(1_800);
+  await page.evaluate(() => {
+    const element = document.getElementById("st2");
+    if (!element) throw new Error("#st2 is missing");
+    const diagnostics = (window as typeof window & {
+      __portfolioMotion?: { snapshot(): DiagnosticsSnapshot };
+      __terminalCopySampler?: {
+        samples: CopySample[];
+        capture: (tag?: CopySample["tag"]) => void;
+        timer: number;
+      };
+    }).__portfolioMotion;
+    if (!diagnostics) throw new Error("Motion diagnostics are not enabled");
+    const samples: CopySample[] = [];
+    const capture = (tag: CopySample["tag"] = "transition"): void => {
+      const hero = diagnostics.snapshot().scenes.hero;
+      const computed = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft ?? 0;
+      const top = viewport?.offsetTop ?? 0;
+      const right = left + (viewport?.width ?? window.innerWidth);
+      const bottom = top + (viewport?.height ?? window.innerHeight);
+      const intersectionWidth = Math.max(0, Math.min(rect.right, right) - Math.max(rect.left, left));
+      const intersectionHeight = Math.max(0, Math.min(rect.bottom, bottom) - Math.max(rect.top, top));
+      samples.push({
+        tag,
+        phase: hero.phase,
+        playbackCompleted: hero.playbackCompleted,
+        modelOpacity: hero.overlays.experienceOpacity,
+        computedOpacity: Number.parseFloat(computed.opacity),
+        visible: computed.display !== "none" && computed.visibility !== "hidden",
+        width: rect.width,
+        height: rect.height,
+        text: element.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        inViewport: intersectionWidth > 0 && intersectionHeight > 0,
+      });
+    };
+    capture();
+    const timer = window.setInterval(capture, 16);
+    (window as typeof window & {
+      __terminalCopySampler?: {
+        samples: CopySample[];
+        capture: (tag?: CopySample["tag"]) => void;
+        timer: number;
+      };
+    }).__terminalCopySampler = { samples, capture, timer };
+  });
+
+  await page.clock.runFor(1_800);
+  let current = await snapshot(page);
+  expect(current.scenes.hero.phase).toBe("complete");
+  expect(current.scenes.hero.playbackCompleted).toBe(true);
+
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  expect((await snapshot(page)).scenes.hero).toMatchObject({ phase: "exit-hold", playbackCompleted: true });
+  await page.clock.runFor(750);
+  await page.clock.runFor(16);
+  current = await snapshot(page);
+  expect(current.scenes.hero.phase).toBe("released");
+  expect(current.scenes.hero.playbackCompleted).toBe(true);
+  const samples = await page.evaluate(() => {
+    const sampler = (window as typeof window & {
+      __terminalCopySampler?: {
+        samples: CopySample[];
+        capture: (tag?: CopySample["tag"]) => void;
+        timer: number;
+      };
+    }).__terminalCopySampler;
+    if (!sampler) throw new Error("Terminal copy sampler is missing");
+    window.clearInterval(sampler.timer);
+    return sampler.samples;
+  });
+  expect(samples.length).toBeGreaterThan(100);
+  expect(samples.some((sample) => sample.phase === "complete")).toBe(true);
+  expect(samples.some((sample) => sample.phase === "exit-hold")).toBe(true);
+  expect(samples.some((sample) => sample.phase === "released")).toBe(true);
+  const playingSamples = samples.filter((sample) => sample.phase === "playing");
+  expect(playingSamples.length).toBeGreaterThan(10);
+  expect(playingSamples.every((sample) => !sample.playbackCompleted)).toBe(true);
+  expect(samples.filter((sample) => sample.phase !== "playing").every((sample) => sample.playbackCompleted)).toBe(true);
+  samples.forEach((sample, index) => {
+    expect(sample.text, `terminal copy text at sample ${index} (${sample.phase})`).toContain("14+");
+    if (sample.phase !== "released") {
+      expect(sample.inViewport, `terminal copy viewport intersection at sample ${index} (${sample.phase})`).toBe(true);
+    }
+    expect(sample.visible, `terminal copy visibility at sample ${index} (${sample.phase})`).toBe(true);
+    expect(sample.width, `terminal copy width at sample ${index} (${sample.phase})`).toBeGreaterThan(0);
+    expect(sample.height, `terminal copy height at sample ${index} (${sample.phase})`).toBeGreaterThan(0);
+    expect(sample.modelOpacity, `model opacity at sample ${index} (${sample.phase})`).toBeGreaterThanOrEqual(0.99);
+    expect(sample.computedOpacity, `terminal copy opacity at sample ${index} (${sample.phase})`).toBeGreaterThanOrEqual(0.99);
+  });
+  expect(Math.min(...samples.map((sample) => sample.modelOpacity))).toBeGreaterThanOrEqual(0.99);
+  expect(Math.min(...samples.map((sample) => sample.computedOpacity))).toBeGreaterThanOrEqual(0.99);
+
+  await page.evaluate(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    root.style.scrollBehavior = "auto";
+    body.style.scrollBehavior = "auto";
+    window.scrollTo({ top: 0, behavior: "auto" });
+  });
+  await page.clock.runFor(16);
+  const returnSample = await page.evaluate(() => {
+    const sampler = (window as typeof window & {
+      __terminalCopySampler?: {
+        samples: CopySample[];
+        capture: (tag?: CopySample["tag"]) => void;
+        timer: number;
+      };
+    }).__terminalCopySampler;
+    if (!sampler) throw new Error("Terminal copy sampler is missing");
+    sampler.capture("return");
+    return sampler.samples.at(-1);
+  });
+  expect(returnSample).toMatchObject({
+    tag: "return",
+    phase: "released",
+    playbackCompleted: true,
+    modelOpacity: 1,
+    computedOpacity: expect.any(Number),
+    visible: true,
+    inViewport: true,
+    text: expect.stringContaining("14+"),
+  });
+  expect(returnSample!.computedOpacity).toBeGreaterThanOrEqual(0.99);
+  expect(returnSample!.width).toBeGreaterThan(0);
+  expect(returnSample!.height).toBeGreaterThan(0);
+});
+
 test("early direct navigation releases without claiming completed terminal copy", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Terminal copy persistence is a mobile presentation contract");
   await prepareLocalPage(page);

@@ -37,7 +37,15 @@ export const MOBILE_HERO_CONTRACT = Object.freeze({
   // Mobile groups occupy one slot. The role reaches zero exactly when the
   // experience begins, so replacement never renders both groups at once.
   role: { fadeIn: 5, peak: 14, fadeOut: 48, end: 58 },
-  experience: { fadeIn: 58, peak: 72, fadeOut: 128, end: 145 },
+  // Once the experience cue reaches full opacity, keep it visible through
+  // the terminal playback frame. Its fade-out starts after the timeline's
+  // end, so completion cannot produce a copy gap before the terminal latch.
+  experience: {
+    fadeIn: 58,
+    peak: 72,
+    fadeOut: HERO_CONTRACT.endFrame,
+    end: HERO_CONTRACT.endFrame + 1,
+  },
   ctaAvailableTargetFrame: 128,
 });
 
@@ -324,16 +332,18 @@ export function sampleMobileHeroPresentation(input: {
 }): HeroPresentationSample {
   const phase = input.phase ?? "playing";
   const reduced = input.reducedMotion === true || phase === "reduced";
-  const terminal =
-    input.playbackCompleted === true &&
-    (phase === "complete" || phase === "exit-hold" || phase === "released");
+  const terminalPhase =
+    phase === "complete" || phase === "exit-hold" || phase === "released";
+  const terminal = input.playbackCompleted === true && terminalPhase;
   // Once playback has completed, the experience copy is the hero's durable
   // terminal label. Pointer drift and navigation may change the phase/frame,
   // but only an observed completed playback may make it durable.
   const cues = reduced
     ? { roleOpacity: 1, experienceOpacity: 1 }
-    : terminal
-      ? { roleOpacity: 0, experienceOpacity: 1 }
+    : terminalPhase
+      ? terminal
+        ? { roleOpacity: 0, experienceOpacity: 1 }
+        : { roleOpacity: 0, experienceOpacity: 0 }
       : sampleMobileHeroCues(input.targetFrame);
   const cta = sampleHeroCTA({
     phase,
