@@ -126,6 +126,13 @@ export type HeroSceneSnapshot = {
     cssHeight: number;
     backingWidth: number;
     backingHeight: number;
+    renderedAsset: {
+      key: string;
+      source: string;
+      destination: { x: number; y: number; width: number; height: number };
+      naturalWidth: number;
+      naturalHeight: number;
+    } | null;
   };
   events: readonly HeroSceneEvent[];
 };
@@ -298,6 +305,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   let phaseStartTime: number | null = null;
   let targetFrame: number = reducedMotion ? HERO_CONTRACT.endFrame : HERO_CONTRACT.startFrame;
   let displayFrame = targetFrame;
+  let renderedAsset: HeroSceneSnapshot["canvas"]["renderedAsset"] = null;
   // This is deliberately distinct from `phase`: a direct navigation can
   // release an in-progress hero, while only a completed playback earns the
   // durable terminal experience copy.
@@ -548,6 +556,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     const image = selection.key ? images.get(selection.key) : undefined;
     const validImage = image && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
     const isMobile = mobileGeometry.mobile;
+    renderedAsset = null;
 
     context.save();
     context.textAlign = "center";
@@ -573,6 +582,13 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       const scale = Math.max(cw / iw, ch / ih) * (isMobile ? 0.55 : 0.59);
       const width = iw * scale;
       const height = ih * scale;
+      renderedAsset = {
+        key: selection.key!,
+        source: image.currentSrc || image.src,
+        destination: { x: (cw - width) / 2, y: ch - height, width, height },
+        naturalWidth: iw,
+        naturalHeight: ih,
+      };
       context.globalAlpha = 1;
       context.globalCompositeOperation = "source-over";
       context.drawImage(image, (cw - width) / 2, ch - height, width, height);
@@ -980,6 +996,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         cssHeight: Math.max(0, rect.height),
         backingWidth: elements.canvas.width,
         backingHeight: elements.canvas.height,
+        renderedAsset,
       },
       events: events.map((event) => ({ ...event })),
     };

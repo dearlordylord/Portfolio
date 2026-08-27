@@ -1,6 +1,6 @@
 # Motion and responsive-layout index
 
-Last updated: 2026-08-26
+Last updated: 2026-08-27
 
 This is the canonical project note for motion work. Load this file before changing animation timing, responsive geometry, canvas behavior, or mobile input. Historical research was removed after its durable conclusions moved into the implementation and tests.
 
@@ -49,6 +49,31 @@ No animation or responsive-layout fix starts from a screenshot alone. Before imp
 The capture sequence is fixed: role → experience → terminal → below hero → timeline → return to hero. Playwright seeks times derived from the shared hero contract, then asserts the named phase and rendered frame. CSS-only transitions are fast-forwarded at screenshot time; JavaScript animation state remains at the recorded checkpoint. R2 samples eight fixed named edge points (top, upper, middle, and lower pairs) from the actual unmasked rendered composite at role, experience, and terminal. Points stay above the overlapping About surface; the 36px patches are centered on canonical normalized coordinates and reject known foreground controls/text while retaining structural `#scrolly`/canvas ownership. Each completed run has a unique manifest (commit, working-tree hash, browser, viewport, fonts, and configuration) and is promoted atomically to `inspection-current`; failed runs cannot replace it.
 
 Before accepting a metric as a fix gate, capture it twice. The normalized observations and findings must match; screenshots are review aids and may only differ within an explicitly understood raster tolerance. Generated artifacts are disposable and ignored. Once an issue is closed, preserve its contract in source/tests and delete obsolete runs.
+
+### Space/time foundation for the next five reports
+
+The next cycle is indexed here before any product behavior changes. `src/motion/convergence-observation.ts` defines two reusable evidence lanes:
+
+- a temporal trace records each trusted wheel/touch input beside paused-clock time, event disposition, hero phase/progress/target/display/rendered frames, document scroll, observed `scrollTo` calls, and visual-viewport position;
+- a spatial observation records named rendered anchors, their bounding rectangles/computed corner radii/overflow, ancestor clipping separately from visual-viewport intersection, and independent height-ratio, vertical-offset, and horizontal-gap relationships.
+
+The browser probe collects facts only when the existing diagnostics gate is enabled. Playwright injects the input observer and supplies trusted input; the production page gets no new listeners or behavior. `tests/browser/convergence-foundation.spec.ts` attaches an end-to-end wheel trace, an isolated trusted-touch tracer trace, and the spatial observation to the ignored Playwright result. Its assertions verify that the instrumentation is present, trusted, finite, and sensitive; they intentionally do not make the current UI satisfy the new requests. Chromium DevTools supplies trusted touch movement; the opt-in WebKit project skips that Chromium-only input driver instead of pretending a constructed DOM event is equivalent. WebKit touch convergence therefore remains a supported-host/real-device lane.
+
+| ID | Future requirement | Evidence and convergence criterion | Status before implementation |
+| --- | --- | --- | --- |
+| N1 | Hold real page scrolling during the first part of the hero, then hand off toward About | Repeated trusted-input trace spanning the possible handoff. For every sample before the agreed semantic boundary: hero progress changes while document `scrollY` does not; after handoff, a trusted downward input produces displacement. A test-side `scrollTo` wrapper separates observed scripted movement from input-driven movement. Synthetic `dispatchEvent` is never input proof. | Measurable; target boundary unresolved because “middle” and “UX/UI to 14+” do not identify one unambiguous semantic frame. |
+| N2 | Increase the hero “head” animation area by 40% | Compare `hero-rendered-content-to-stage-height` against a repeatable pre-fix baseline at the same viewport/frame/fonts/assets: target ratio is baseline × 1.4, subject to the available stage and no clipping/overflow regression. The test derives the alpha-content bounds of the transparent frame and maps them through the runtime's actual canvas destination rectangle; canvas size alone is context, not proof. | Measurable; whether “head” means the full non-transparent cutout or a narrower anatomical region still requires the referenced screenshots before fixing. |
+| N3 | Move the hero type block slightly down | Compare role and experience copy top offsets from the stable hero stage at every semantic copy checkpoint; both must move by the same agreed delta and remain visible/unclipped. | Measurable; target delta is unresolved until the referenced screenshots or a numeric offset are available. |
+| N4 | Remove About background corner rounding | All four computed radii on `aboutSurface` equal `0px` at mobile checkpoints, without changing unrelated card radii. | Measurable; not implemented in this foundation cycle. |
+| N5 | Make date→spine and spine→text Journey gaps 16px | For every timeline row, rendered edge-to-edge gaps are 16 CSS px (±1px layout tolerance), with no overlap, clipping, or horizontal overflow. Row enumeration is exhaustive and retained beside the existing readable-content gutter evidence. | Measurable; not implemented in this foundation cycle. |
+
+The expert rejection check for each future metric is: would a motion specialist reject endpoint-only evidence, would a layout specialist reject inferred CSS instead of rendered boxes, or would a browser specialist reject synthetic events as native scrolling? If yes, the metric cannot gate a fix.
+
+Trade-offs are explicit. Playwright can deterministically prove page behavior in its emulated viewport, but not physical browser chrome; that remains a real-device lane. The generic evidence records stay after this cycle. Requirement-specific N1–N5 rows and disposable captures should be deleted once their durable acceptance contracts have moved into product tests and the reports are closed.
+
+“Input-driven” here means displacement after a trusted browser input before any page `scrollTo` call has been observed in that trace. Once a scripted smooth scroll begins, later displacement remains conservatively unattributed because call initiation does not reveal when compositor motion settles. This is stronger than correlating a wheel event with `scrollY`, but it is not a claim about compositor internals; real-device input remains the final mobile validation lane.
+
+Alpha bounds are inspected on a maximum-512px raster and mapped back through natural-image and rendered-canvas coordinates. This trades source-pixel exactness for bounded browser memory; at the mobile rendered size the uncertainty is below one CSS pixel, far tighter than a 40% size decision. A source-pixel art audit would require a separate full-resolution tool and is outside this layout gate.
 
 Use `npm run inspect:motion:compare` to make that repeatability check explicit. It compares the default `inspection-current/mobile-390x844` directory with its `.previous` promotion (or accepts current and previous directories as the first and second arguments). `findings.json` must be byte-identical and parsed findings must also be semantically identical. For `observations.json`, object keys are sorted, array order is preserved, geometry fields named `left`, `right`, `top`, `bottom`, `x`, `y`, `width`, or `height` are rounded to the nearest `1/64` CSS pixel (Chromium's layout quantum), and all other finite numbers are rounded to the nearest `0.001`; non-finite values are left unchanged. The command prints JSON paths for up to 20 differences and exits nonzero on a missing file, findings byte/semantic difference, or normalized observation difference.
 

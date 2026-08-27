@@ -9,6 +9,14 @@ import {
   type VisualProbeObservation,
 } from "../motion/visual-inspection";
 import type { MotionDiagnosticsPort } from "./diagnostics";
+import {
+  heightRatio,
+  horizontalGap,
+  verticalOffset,
+  type ObservedRect,
+  type SpatialAnchor,
+  type SpatialObservation,
+} from "../motion/convergence-observation";
 
 /**
  * A pixel sample is evidence only when the harness can explain where it came
@@ -91,7 +99,184 @@ export type BrowserVisualProbeObservation = VisualProbeObservation & {
    * `insets.timelineSemantic` as its stable contract. */
   timelineLeftEdges: readonly VisualSemanticLeftEdge[];
   timelineWrapperGutter: number;
+  /** Generic rendered anchors/relationships for the next convergence cycle. */
+  spatial: SpatialObservation;
 };
+
+function observedRect(element: Element | null): ObservedRect | null {
+  if (!element) return null;
+  const box = element.getBoundingClientRect();
+  return {
+    left: box.left,
+    top: box.top,
+    right: box.right,
+    bottom: box.bottom,
+    width: box.width,
+    height: box.height,
+  };
+}
+
+function captureSpatialObservation(
+  ownerWindow: Window,
+  ownerDocument: Document,
+): SpatialObservation {
+  const selectors = {
+    hero: "#scrolly",
+    heroStage: "#scrolly-sticky",
+    heroHead: "#scrolly-canvas",
+    heroRoleCopy: "#st1",
+    heroExperienceCopy: "#st2",
+    aboutSurface: "#about",
+    journeySpine: "#timeline .tl-spine",
+  } as const;
+  const anchors: Record<string, SpatialAnchor> = {};
+  const anchor = (
+    id: string,
+    selector: string,
+    element: Element | null,
+  ): SpatialAnchor => {
+    if (!element) {
+      return {
+        id,
+        selector,
+        present: false,
+        rect: null,
+        viewportIntersectionRatio: null,
+        ancestorClipped: null,
+        style: null,
+      };
+    }
+    const box = element.getBoundingClientRect();
+    const rect = observedRect(element)!;
+    const computed = ownerWindow.getComputedStyle(element);
+    const viewportVisible = intersectRect(
+      rect.left,
+      rect.top,
+      rect.right,
+      rect.bottom,
+      viewportRect(ownerWindow),
+    );
+    let ancestorVisible = {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+      area: rect.width * rect.height,
+    };
+    let ancestor = element.parentElement;
+    while (ancestor) {
+      const ancestorStyle = ownerWindow.getComputedStyle(ancestor);
+      if (
+        isClippingOverflow(ancestorStyle.overflowX) ||
+        isClippingOverflow(ancestorStyle.overflowY)
+      ) {
+        const ancestorBox = ancestor.getBoundingClientRect();
+        ancestorVisible = intersectRect(
+          ancestorVisible.x,
+          ancestorVisible.y,
+          ancestorVisible.x + ancestorVisible.width,
+          ancestorVisible.y + ancestorVisible.height,
+          ancestorBox,
+        );
+      }
+      ancestor = ancestor.parentElement;
+    }
+    const area = box.width * box.height;
+    return {
+      id,
+      selector,
+      present: true,
+      rect,
+      viewportIntersectionRatio: area > 0 ? viewportVisible.area / area : 0,
+      ancestorClipped: ancestorVisible.area + 0.5 < Math.max(0, area),
+      style: {
+        borderTopLeftRadius: computed.borderTopLeftRadius,
+        borderTopRightRadius: computed.borderTopRightRadius,
+        borderBottomRightRadius: computed.borderBottomRightRadius,
+        borderBottomLeftRadius: computed.borderBottomLeftRadius,
+        overflowX: computed.overflowX,
+        overflowY: computed.overflowY,
+      },
+    };
+  };
+  for (const [id, selector] of Object.entries(selectors)) {
+    const element = ownerDocument.querySelector(selector);
+    anchors[id] = anchor(id, selector, element);
+  }
+  ownerDocument.querySelectorAll("#timeline .tl-row").forEach((row, index) => {
+    for (const [suffix, selector] of [
+      ["Year", ".tl-yr"],
+      ["Body", ".tl-body"],
+      ["BodyContent", ".tl-body > *"],
+    ] as const) {
+      const id = `journeyRow${index}${suffix}`;
+      const element = row.querySelector(selector);
+      const fullSelector = `#timeline .tl-row:nth-child(${index + 2}) ${selector}`;
+      anchors[id] = anchor(id, fullSelector, element);
+    }
+  });
+  const relation = (
+    id: string,
+    kind: "height-ratio" | "vertical-offset" | "horizontal-gap",
+    from: string,
+    to: string,
+    value: number | null,
+  ) => ({
+    id,
+    kind,
+    from,
+    to,
+    value,
+    unit: kind === "height-ratio" ? ("ratio" as const) : ("css-px" as const),
+  });
+  const relations = [
+    relation(
+      "hero-head-to-stage-height",
+      "height-ratio",
+      "heroHead",
+      "heroStage",
+      heightRatio(anchors.heroHead!.rect, anchors.heroStage!.rect),
+    ),
+    relation(
+      "role-copy-top-from-stage",
+      "vertical-offset",
+      "heroRoleCopy",
+      "heroStage",
+      verticalOffset(anchors.heroRoleCopy!.rect, anchors.heroStage!.rect),
+    ),
+    relation(
+      "experience-copy-top-from-stage",
+      "vertical-offset",
+      "heroExperienceCopy",
+      "heroStage",
+      verticalOffset(anchors.heroExperienceCopy!.rect, anchors.heroStage!.rect),
+    ),
+  ];
+  ownerDocument.querySelectorAll("#timeline .tl-row").forEach((_, index) => {
+    const yearId = `journeyRow${index}Year`;
+    const bodyId = `journeyRow${index}BodyContent`;
+    relations.push(
+      relation(
+        `journey-row-${index}-year-to-spine`,
+        "horizontal-gap",
+        yearId,
+        "journeySpine",
+        horizontalGap(anchors[yearId]?.rect ?? null, anchors.journeySpine!.rect),
+      ),
+      relation(
+        `journey-row-${index}-spine-to-body`,
+        "horizontal-gap",
+        "journeySpine",
+        bodyId,
+        horizontalGap(anchors.journeySpine!.rect, anchors[bodyId]?.rect ?? null),
+      ),
+    );
+  });
+  return {
+    anchors,
+    relations,
+  };
+}
 
 function leftOf(ownerDocument: Document, selector: string): number {
   return (
@@ -658,6 +843,7 @@ export function captureVisualProbe(
     heroExperience,
     timelineLeftEdges,
     timelineWrapperGutter,
+    spatial: captureSpatialObservation(ownerWindow, ownerDocument),
   };
   return probe;
 }
