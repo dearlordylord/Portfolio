@@ -12,23 +12,52 @@ const defaultCurrent = path.resolve(
 const defaultPrevious = `${defaultCurrent}.previous`;
 const currentDirectory = path.resolve(process.argv[2] ?? defaultCurrent);
 const previousDirectory = path.resolve(process.argv[3] ?? defaultPrevious);
+const geometryKeys = new Set([
+  "left",
+  "right",
+  "top",
+  "bottom",
+  "x",
+  "y",
+  "width",
+  "height",
+]);
 
 function readJson(filePath: string): JsonValue {
   return JSON.parse(readFileSync(filePath, "utf8")) as JsonValue;
 }
 
-function normalizeObservation(value: JsonValue): JsonValue {
+function normalizeObservation(
+  value: JsonValue,
+  key: string | undefined = undefined,
+  pathAt = "$",
+): JsonValue {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return value;
-    const rounded = Math.round(value * 1_000) / 1_000;
+    // Chromium serializes layout geometry on a 1/64 CSS-pixel grid. Keep
+    // animation/timing values at the stricter 0.001 precision so a real frame
+    // drift remains visible to the repeatability check.
+    const quantum = geometryKeys.has(key ?? "") ? 1 / 64 : 1 / 1_000;
+    const rounded = Math.round(value / quantum) * quantum;
     return Object.is(rounded, -0) ? 0 : rounded;
   }
-  if (Array.isArray(value)) return value.map(normalizeObservation);
+  if (Array.isArray(value)) {
+    return value.map((item, index) =>
+      normalizeObservation(item, undefined, `${pathAt}[${index}]`),
+    );
+  }
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [key, normalizeObservation(value[key]!)]),
+        .map((childKey) => [
+          childKey,
+          normalizeObservation(
+            value[childKey]!,
+            childKey,
+            `${pathAt}.${childKey}`,
+          ),
+        ]),
     );
   }
   return value;

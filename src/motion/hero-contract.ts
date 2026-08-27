@@ -319,12 +319,22 @@ export function sampleMobileHeroPresentation(input: {
   phase?: HeroPhase;
   reducedMotion?: boolean;
   ctaAvailable?: boolean;
+  /** Set only after the playing timeline reaches its terminal frame. */
+  playbackCompleted?: boolean;
 }): HeroPresentationSample {
   const phase = input.phase ?? "playing";
   const reduced = input.reducedMotion === true || phase === "reduced";
+  const terminal =
+    input.playbackCompleted === true &&
+    (phase === "complete" || phase === "exit-hold" || phase === "released");
+  // Once playback has completed, the experience copy is the hero's durable
+  // terminal label. Pointer drift and navigation may change the phase/frame,
+  // but only an observed completed playback may make it durable.
   const cues = reduced
     ? { roleOpacity: 1, experienceOpacity: 1 }
-    : sampleMobileHeroCues(input.targetFrame);
+    : terminal
+      ? { roleOpacity: 0, experienceOpacity: 1 }
+      : sampleMobileHeroCues(input.targetFrame);
   const cta = sampleHeroCTA({
     phase,
     targetFrame: input.targetFrame,

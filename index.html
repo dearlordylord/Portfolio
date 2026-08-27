@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#edeef6">
 <title>Irina Ivashchenko — UX/UI Designer</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
@@ -22,8 +23,8 @@
   --hero-stage-height: 85svh;
   --hero-copy-top: 9svh;
 }
-html { scroll-behavior: auto; width: 100%; max-width: 100%; }
-body { width: 100%; max-width: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; overflow-x: hidden; overscroll-behavior: none; }
+html { scroll-behavior: auto; width: 100%; max-width: 100%; min-height: 100%; background: var(--bg); }
+body { width: 100%; max-width: 100%; min-height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.7; overflow-x: hidden; overscroll-behavior: none; }
 
 /* blobs */
 .blob { position: fixed; border-radius: 50%; filter: blur(140px); opacity: 0.07; pointer-events: none; z-index: 0; }
@@ -270,11 +271,14 @@ section { position: relative; z-index: 1; }
 
 /* mobile */
 @media (max-width: 600px) {
-  .tl-spine { left: 56px; }
-  .tl-row { grid-template-columns: 56px 1fr; }
+  /* Keep the widest year label between the shared section gutter and the
+     spine. The old 56px marker column let 2009/2012/NOW protrude into the
+     viewport gutter and made the timeline look horizontally squeezed. */
+  .tl-spine { left: 80px; }
+  .tl-row { grid-template-columns: 80px minmax(0, 1fr); }
   .tl-yr { font-size: 1.1rem; }
-  .tl-yr-col { padding-right: 16px; }
-  .tl-body { padding-left: 16px; }
+  .tl-yr-col { min-width: 0; padding-right: 2px; }
+  .tl-body { min-width: 0; padding-left: 16px; }
   .tl-fork { grid-template-columns: 1fr; gap: 1.2rem 0; }
   .tl-branch-divider { display: none; }
   .tl-row-now .tl-body { padding-left: 16px; }
@@ -319,8 +323,8 @@ section { position: relative; z-index: 1; }
 footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb); color: var(--muted); font-size: 0.78rem; position: relative; z-index: 1; }
 
 /* ── SCROLLY IMAGE SEQUENCE ── */
-#scrolly { position: relative; width: 100%; max-width: 100%; height: var(--hero-stable-h); overflow-x: clip; z-index: 5; }
-#scrolly-sticky { position: relative; height: var(--hero-stable-h); width: 100%; overflow: hidden; background: transparent; }
+#scrolly { position: relative; width: 100%; max-width: 100%; height: var(--hero-stable-h); overflow-x: clip; z-index: 5; background: var(--bg); }
+#scrolly-sticky { position: relative; height: var(--hero-stable-h); width: 100%; overflow: hidden; background: var(--bg); }
 #scrolly-canvas { position: absolute; top: var(--hero-stage-top); left: 0; width: 100%; height: var(--hero-stage-height); display: block; }
 /* loader */
 #scrolly-loader { position: absolute; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.6s; }
@@ -407,6 +411,8 @@ footer { text-align: center; padding: 2rem 4rem; border-top: 1px solid var(--gb)
   /* Bump z-index so explore CTA and strip stay above other layers in Safari */
   #explore-cta { z-index: 30 !important; }
   #photo-strip { z-index: 25 !important; }
+  /* Keep transparent mobile photo areas on the uniform hero surface. */
+  #noise-top { display: none; }
   /* Case overlay full-width on small screens */
   #case-overlay-inner { max-width: 100% !important; padding: 4rem 0 3rem !important; }
   /* Grid minimums and intrinsic title width must fit inside the 1.5rem mobile

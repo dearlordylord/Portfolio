@@ -336,8 +336,16 @@ export class MotionScheduler {
   }
 
   #scheduleIfNeeded(): void {
-    if (this.#disposed || this.#isTicking || this.#pendingFrame || !this.#hasRunnableWork()) {
-      if (!this.#isTicking && !this.#hasRunnableWork()) this.#cancelPendingFrame();
+    const hasRunnableWork = this.#hasRunnableWork();
+    if (this.#disposed || this.#isTicking || this.#pendingFrame || !hasRunnableWork) {
+      if (!this.#isTicking && !hasRunnableWork) {
+        this.#cancelPendingFrame();
+        // A new runnable period must start with a zero delta. Retaining the
+        // previous timestamp makes the first frame after an idle/hidden scene
+        // consume the entire idle interval as animation time. Active sibling
+        // scenes keep the timestamp because that is a continuous period.
+        this.#resetElapsedTime();
+      }
       return;
     }
 

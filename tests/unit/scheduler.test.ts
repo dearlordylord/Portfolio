@@ -110,6 +110,52 @@ describe("MotionScheduler", () => {
     expect(driver.requestCount).toBe(2);
   });
 
+  it("starts a fresh zero-delta period after all runnable scenes go idle", () => {
+    const driver = new ManualFrameDriver();
+    const deltas: number[] = [];
+    const scheduler = createTestScheduler(driver);
+    scheduler.register("hero", (_timestamp, delta) => {
+      deltas.push(delta);
+      return false;
+    });
+
+    driver.step(16);
+    expect(deltas).toEqual([0]);
+
+    // A long idle interval is not animation time. The first frame after
+    // reactivation must not jump by the interval since the prior RAF.
+    driver.nowMs += 2_000;
+    scheduler.activate("hero");
+    driver.step(16);
+    expect(deltas).toEqual([0, 0]);
+  });
+
+  it("keeps elapsed continuity while a sibling scene remains runnable", () => {
+    const driver = new ManualFrameDriver();
+    const heroDeltas: number[] = [];
+    const skillDeltas: number[] = [];
+    const scheduler = createTestScheduler(driver);
+    let heroTicks = 0;
+    let skillTicks = 0;
+    scheduler.register("hero", (_timestamp, delta) => {
+      heroDeltas.push(delta);
+      heroTicks += 1;
+      return heroTicks < 2;
+    });
+    scheduler.register("skills", (_timestamp, delta) => {
+      skillDeltas.push(delta);
+      skillTicks += 1;
+      return skillTicks < 3;
+    });
+
+    driver.step(16);
+    scheduler.activate("hero");
+    driver.step(25);
+
+    expect(heroDeltas).toEqual([0, 25]);
+    expect(skillDeltas).toEqual([0, 25]);
+  });
+
   it("does not invoke inactive, hidden, or reduced-motion scenes", () => {
     const driver = new ManualFrameDriver();
     const calls: string[] = [];

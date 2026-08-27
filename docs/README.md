@@ -50,7 +50,7 @@ The capture sequence is fixed: role → experience → terminal → below hero �
 
 Before accepting a metric as a fix gate, capture it twice. The normalized observations and findings must match; screenshots are review aids and may only differ within an explicitly understood raster tolerance. Generated artifacts are disposable and ignored. Once an issue is closed, preserve its contract in source/tests and delete obsolete runs.
 
-Use `npm run inspect:motion:compare` to make that repeatability check explicit. It compares the default `inspection-current/mobile-390x844` directory with its `.previous` promotion (or accepts current and previous directories as the first and second arguments). `findings.json` must be byte-identical and parsed findings must also be semantically identical. For `observations.json`, object keys are sorted, array order is preserved, and every finite number is rounded to the nearest `0.001` before recursive comparison; non-finite values are left unchanged. The command prints JSON paths for up to 20 differences and exits nonzero on a missing file, findings byte/semantic difference, or normalized observation difference.
+Use `npm run inspect:motion:compare` to make that repeatability check explicit. It compares the default `inspection-current/mobile-390x844` directory with its `.previous` promotion (or accepts current and previous directories as the first and second arguments). `findings.json` must be byte-identical and parsed findings must also be semantically identical. For `observations.json`, object keys are sorted, array order is preserved, geometry fields named `left`, `right`, `top`, `bottom`, `x`, `y`, `width`, or `height` are rounded to the nearest `1/64` CSS pixel (Chromium's layout quantum), and all other finite numbers are rounded to the nearest `0.001`; non-finite values are left unchanged. The command prints JSON paths for up to 20 differences and exits nonzero on a missing file, findings byte/semantic difference, or normalized observation difference.
 
 ### Real mobile browser chrome
 
@@ -69,10 +69,10 @@ Non-loopback diagnostics are enabled only in Vite development builds and still r
 
 ### Current report vocabulary
 
-- **R1:** paired expanded/collapsed real-device browser-chrome screenshots; viewport inset is context only. Current synthetic status: `inconclusive`.
-- **R2:** whole first-screen background continuity from eight fixed named, background-only screenshot patch averages over the `#scrolly` surface above the overlapping About section; high-frequency texture is averaged. Current status: `unmet` (actual composite spread).
-- **R3:** semantic “14+ years” text, terminal phase, display/visibility/opacity, nonzero geometry, viewport/clipping/occlusion, plus immediate/500ms/2000ms return samples. Current status: `unmet` (opacity ≈0.24 throughout).
-- **R4:** minimum rendered left edge of the section header, every year, and every timeline body versus the shared 24px gutter; decorative spine/dots are excluded. Current status: `unmet` (minimum −14px; several year labels protrude).
+- **R1:** paired expanded/collapsed real-device browser-chrome screenshots; viewport inset is context only. Current synthetic status: `inconclusive`; the page now uses `viewport-fit=cover`, a matching theme color, and full html/body/scrolly surface coverage, but only a real-device pair can verify the browser-chrome curtain.
+- **R2:** whole first-screen background continuity from eight fixed named, background-only screenshot patch averages over the `#scrolly` surface above the overlapping About section; high-frequency texture is averaged. Current status: `met` (0 RGB-channel spread at role, experience, and terminal checkpoints).
+- **R3:** semantic “14+ years” text, a runtime `playbackCompleted` latch, terminal/normal exit phases, display/visibility/opacity, nonzero geometry, viewport/clipping/occlusion, plus immediate/500ms/2000ms return samples. Released copy is accepted only when the observed latch is true. Current status: `met` (fully visible at terminal, exit-hold, released, and all three return samples).
+- **R4:** minimum rendered left edge of the section header, every year, and every timeline body versus the shared 24px gutter; decorative spine/dots are excluded. Current status: `met` (minimum 24px; no offenders or horizontal overflow).
 
 ## Repository and evidence policy
 

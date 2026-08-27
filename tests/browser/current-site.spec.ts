@@ -16,6 +16,7 @@ type DiagnosticsSnapshot = {
       autoplay: boolean;
       reducedMotion: boolean;
       exitHoldPending: boolean;
+      playbackCompleted: boolean;
       displayFrame: number;
       targetFrame: number;
       assets: {
@@ -414,7 +415,9 @@ test("M1 keeps mobile hero geometry stable through visual-height resize", async 
   expect(beforeCanvas!.rect.bottom).toBeCloseTo(beforeHero!.rect.height * 0.85, 1);
 
   await page.setViewportSize({ width: 390, height: 700 });
-  await page.clock.runFor(34);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.geometry.stableHeight)
+    .toBe(before.scenes.hero.geometry.stableHeight);
   const after = await snapshot(page);
   expect(after.scenes.hero.geometry.stableHeight).toBe(before.scenes.hero.geometry.stableHeight);
   expect(after.elements.scrolly?.rect.height).toBeCloseTo(beforeHero!.rect.height, 1);
@@ -433,7 +436,23 @@ test("mobile scrolly and About backgrounds never exceed the live viewport width"
 
   for (const width of [430, 390, 375, 360, 340, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    await page.clock.runFor(34);
+    await expect
+      .poll(async () => (await snapshot(page)).scenes.hero.canvas.cssWidth)
+      .toBe(width);
+    const effectiveDpr = Math.min((await snapshot(page)).viewport.dpr, 2);
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const matrix = (
+              document.getElementById("scrolly-canvas") as HTMLCanvasElement | null
+            )?.getContext("2d")?.getTransform();
+            return matrix
+              ? { a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d, e: matrix.e, f: matrix.f }
+              : null;
+          }),
+      )
+      .toEqual({ a: effectiveDpr, b: 0, c: 0, d: effectiveDpr, e: 0, f: 0 });
     const report = await page.evaluate(() => {
       const rect = (id: string) => {
         const value = document.getElementById(id)?.getBoundingClientRect();
@@ -505,6 +524,93 @@ test("mobile scrolly and About backgrounds never exceed the live viewport width"
       e: 0,
       f: 0,
     });
+  }
+});
+
+test("mobile timeline years and readable content stay inside the shared section gutter", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "The timeline gutter contract is mobile-specific");
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=hero,particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.locator("#timeline").scrollIntoViewIfNeeded();
+    await expect
+      .poll(async () => page.evaluate(() => document.documentElement.clientWidth))
+      .toBe(width);
+    const report = await page.evaluate(() => {
+      const wrapper = document.querySelector<HTMLElement>("#timeline .tl-sw");
+      if (!wrapper) throw new Error("Timeline wrapper is missing");
+      const wrapperStyle = getComputedStyle(wrapper);
+      const gutter = wrapper.getBoundingClientRect().left +
+        Number.parseFloat(wrapperStyle.paddingLeft || "0");
+      const probe = (window as typeof window & {
+        __portfolioVisualProbe?: () => {
+          insets: {
+            timelineSemantic?: {
+              complete: boolean;
+              rowCount: number;
+              rows: Array<{
+                id: string;
+                year: { left: number; right?: number; visible: boolean; readable: boolean; width: number; height: number };
+                body: { left: number; right?: number; visible: boolean; readable: boolean; width: number; height: number };
+                readableBodyDescendants: Array<{ left: number; visible: boolean; readable: boolean; width: number; height: number }>;
+              }>;
+              header: { left: number; visible: boolean; readable: boolean; width: number; height: number } | null;
+              title: { left: number; visible: boolean; readable: boolean; width: number; height: number } | null;
+            };
+          };
+        };
+      }).__portfolioVisualProbe?.();
+      const semantic = probe?.insets.timelineSemantic;
+      if (!semantic) throw new Error("Timeline semantic probe is missing");
+      const domRows = [...document.querySelectorAll<HTMLElement>("#timeline .tl-row")];
+      return {
+        gutter,
+        semantic,
+        domRowCount: domRows.length,
+        domRowIds: domRows.map((_, index) => `timeline-row-${index}`),
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      };
+    });
+    expect(report.scrollWidth).toBeLessThanOrEqual(report.clientWidth);
+    expect(report.semantic.complete).toBe(true);
+    expect(report.semantic.header).not.toBeNull();
+    expect(report.semantic.title).not.toBeNull();
+    expect(report.semantic.rowCount).toBe(report.domRowCount);
+    expect(report.semantic.rows).toHaveLength(report.domRowCount);
+    expect(report.semantic.rows.map((row) => row.id)).toEqual(report.domRowIds);
+    expect(report.semantic.header).toMatchObject({ visible: true, readable: true });
+    expect(report.semantic.title).toMatchObject({ visible: true, readable: true });
+
+    const anchors = [
+      report.semantic.header,
+      report.semantic.title,
+      ...report.semantic.rows.flatMap((row) => [
+        row.year,
+        row.body,
+        ...row.readableBodyDescendants,
+      ]),
+    ].filter((anchor): anchor is NonNullable<typeof anchor> => anchor !== null);
+    for (const anchor of anchors) {
+      expect(anchor.visible, `${anchor.left} anchor is hidden`).toBe(true);
+      expect(anchor.readable, `${anchor.left} anchor is not readable`).toBe(true);
+      expect(anchor.width).toBeGreaterThan(0);
+      expect(anchor.height).toBeGreaterThan(0);
+      expect(anchor.left, "timeline content starts before its shared gutter").toBeGreaterThanOrEqual(
+        report.gutter - 1,
+      );
+      const right = "right" in anchor && typeof anchor.right === "number"
+        ? anchor.right
+        : anchor.left + anchor.width;
+      expect(right, "timeline content exceeds the viewport").toBeLessThanOrEqual(
+        report.clientWidth + 1,
+      );
+    }
   }
 });
 
@@ -714,6 +820,61 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   const screenshot = await page.screenshot({ animations: "allow" });
   writeBaseline(testInfo.project.name, "hero-experience-cta-state.json", `${JSON.stringify(current, null, 2)}\n`);
   writeBaseline(testInfo.project.name, "hero-experience-cta.png", screenshot);
+});
+
+test("completed playback retains terminal experience copy through normal exit", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Terminal copy persistence is a mobile presentation contract");
+  test.setTimeout(120_000);
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+
+  await page.clock.runFor(1_600);
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  await page.clock.runFor(3_600);
+  let current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "complete", playbackCompleted: true });
+  expect(current.scenes.hero.overlays.experienceOpacity).toBe(1);
+  await expect(page.locator("#st2")).toBeVisible();
+
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  expect((await snapshot(page)).scenes.hero).toMatchObject({ phase: "exit-hold", playbackCompleted: true });
+  expect((await snapshot(page)).scenes.hero.overlays.experienceOpacity).toBe(1);
+  await page.clock.runFor(750);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "released", playbackCompleted: true });
+  expect(current.scenes.hero.overlays.experienceOpacity).toBe(1);
+  await expect(page.locator("#st2")).toBeVisible();
+  await expect(page.locator("#st2")).toContainText("14+");
+});
+
+test("early direct navigation releases without claiming completed terminal copy", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Terminal copy persistence is a mobile presentation contract");
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1_600);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("ready");
+
+  await page.evaluate(() =>
+    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    ),
+  );
+  const current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "released", playbackCompleted: false });
+  expect(current.scenes.hero.overlays.experienceOpacity).toBe(0);
+  expect(current.elements.st2?.style.opacity).toBe("0");
 });
 
 test("hero exit hold is canceled by direct navigation", async ({ page }) => {

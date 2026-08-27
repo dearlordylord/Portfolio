@@ -132,6 +132,8 @@ export type HeroPersistenceSample = HeroCopySnapshot &
 
 export type HeroObservation = Readonly<{
   phase: string;
+  /** Runtime latch proving playback reached its terminal frame. */
+  playbackCompleted: boolean;
   targetFrame: number;
   displayFrame: number;
   /** Legacy diagnostic scalars remain readable for report compatibility. */
@@ -670,7 +672,8 @@ export function evaluateVisualConvergence(
   const terminalStates =
     coherentScenario && syntheticTerminal
       ? [
-          syntheticTerminal.hero.phase === "complete"
+          syntheticTerminal.hero.phase === "complete" &&
+          syntheticTerminal.hero.playbackCompleted === true
             ? classifyCopy(syntheticTerminal.hero.experience)
             : ("invalid" as const),
         ]
@@ -696,8 +699,9 @@ export function evaluateVisualConvergence(
   const returnStates =
     coherentScenario && syntheticReturn
       ? [
-          syntheticReturn.hero.phase === "complete" ||
-          syntheticReturn.hero.phase === "released"
+          (syntheticReturn.hero.phase === "complete" ||
+            syntheticReturn.hero.phase === "released") &&
+          syntheticReturn.hero.playbackCompleted === true
             ? persistenceSamples.map((sample) => classifyCopy(sample))
             : ["invalid" as const],
         ].flat()

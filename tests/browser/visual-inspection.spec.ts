@@ -42,6 +42,9 @@ type RuntimeSnapshot = {
   scenes: {
     hero: {
       phase: string;
+      phaseStartTime: number | null;
+      phaseElapsedMs: number;
+      playbackCompleted: boolean;
       targetFrame: number;
       displayFrame: number;
       renderedFrame: number;
@@ -89,21 +92,28 @@ const checkpointOrder: readonly InspectionCheckpoint[] = [
   "timeline",
   "hero-return",
 ];
-const frameMs = 1000 / 60;
-const experienceSeekMs = (() => {
+// Playwright's fake requestAnimationFrame scheduler uses a 16ms quantum
+// (`getTimeToNextFrame()` in its injected clock), rather than the nominal
+// 1000/60 display-refresh interval. Keep this harness clock quantum explicit;
+// the product contract remains expressed in real milliseconds.
+const inspectionFrameMs = 16;
+const experienceCheckpointFrame =
+  (MOBILE_HERO_CONTRACT.experience.peak + MOBILE_HERO_CONTRACT.experience.fadeOut) / 2;
+const experienceCheckpointElapsedMs = (() => {
   for (
-    let elapsed = 0;
+    let elapsed = inspectionFrameMs;
     elapsed <= HERO_CONTRACT.playbackDurationMs;
-    elapsed += 10
+    elapsed += inspectionFrameMs
   ) {
-    if (
-      sampleHeroTimeline("playing", elapsed).targetFrame >=
-      MOBILE_HERO_CONTRACT.experience.peak
-    )
-      return elapsed;
+    const target = sampleHeroTimeline("playing", elapsed).targetFrame;
+    if (target >= experienceCheckpointFrame) return elapsed;
   }
   throw new Error("Hero contract has no experience checkpoint");
 })();
+const experienceCheckpointTarget = sampleHeroTimeline(
+  "playing",
+  experienceCheckpointElapsedMs,
+).targetFrame;
 const neutralTerminalFrame = HERO_CONTRACT.endFrame - HERO_CONTRACT.driftFrames;
 const runId = (
   process.env.MOTION_INSPECTION_RUN_ID ?? `${Date.now()}-${randomUUID()}`
@@ -351,10 +361,117 @@ async function seekSemantic(
   return snapshot;
 }
 
+async function settleHeroFrame(
+  page: Page,
+  name: string,
+  expectedFrame: number,
+): Promise<RuntimeSnapshot> {
+  // The hero intentionally smooths frames. A phase barrier alone can leave a
+  // ready/complete scene with a fractional display frame if its last RAF was
+  // scheduled just before the paused-clock seek. Wake that scene with the
+  // neutral pointer position, then advance one frame at a time until the
+  // runtime's own exact-settle branch reports the semantic frame.
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        clientX: window.innerWidth / 2,
+        clientY: window.innerHeight / 2,
+      }),
+    ),
+  );
+  let latest = await runtimeSnapshot(page);
+  const maxSteps = Math.ceil(2_000 / inspectionFrameMs);
+  for (let step = 0; step < maxSteps; step += 1) {
+    await page.clock.runFor(inspectionFrameMs);
+    latest = await runtimeSnapshot(page);
+    const hero = latest.scenes.hero;
+    if (
+      Math.abs(hero.targetFrame - expectedFrame) < 0.001 &&
+      Math.abs(hero.displayFrame - expectedFrame) < 0.001 &&
+      hero.renderedFrame === Math.round(expectedFrame)
+    ) {
+      return latest;
+    }
+  }
+  const { phase, targetFrame, displayFrame, renderedFrame } = latest.scenes.hero;
+  throw new Error(
+    `Checkpoint '${name}' could not settle the semantic frame; phase=${phase}, target=${targetFrame}, display=${displayFrame}, rendered=${renderedFrame}`,
+  );
+}
+
+async function observePlayingBoundary(
+  page: Page,
+  name: string,
+): Promise<RuntimeSnapshot> {
+  // The wheel event changes the phase synchronously, but phaseStartTime is
+  // established by the first RAF. Observe that boundary before advancing a
+  // fixed number of clock quanta; a wall-clock seek from the previous ready
+  // frame is sensitive to where the input happened between RAFs.
+  let latest = await runtimeSnapshot(page);
+  const maxSteps = Math.ceil(1_000 / inspectionFrameMs);
+  for (let step = 0; step < maxSteps; step += 1) {
+    if (
+      latest.scenes.hero.phase === "playing" &&
+      latest.scenes.hero.phaseStartTime !== null
+    ) {
+      return latest;
+    }
+    await page.clock.runFor(inspectionFrameMs);
+    latest = await runtimeSnapshot(page);
+  }
+  throw new Error(
+    `Checkpoint '${name}' could not observe a playing phase boundary; phase=${latest.scenes.hero.phase}, phaseStart=${latest.scenes.hero.phaseStartTime}`,
+  );
+}
+
+async function advancePlayingCheckpoint(
+  page: Page,
+  name: string,
+  boundary: RuntimeSnapshot,
+): Promise<RuntimeSnapshot> {
+  const startingElapsed = boundary.scenes.hero.phaseElapsedMs;
+  if (
+    boundary.scenes.hero.phase !== "playing" ||
+    !Number.isFinite(startingElapsed) ||
+    startingElapsed < 0 ||
+    startingElapsed > experienceCheckpointElapsedMs
+  ) {
+    throw new Error(
+      `Checkpoint '${name}' has an invalid playing boundary; phase=${boundary.scenes.hero.phase}, elapsed=${startingElapsed}`,
+    );
+  }
+  // The boundary is observed, not assumed to be at elapsed zero: the shared
+  // scheduler may have delivered a first RAF with a non-zero delta from the
+  // preceding ready frame. Compensate that measured elapsed time, then land on
+  // the same contract-derived 16ms quantum on every capture.
+  const remaining = experienceCheckpointElapsedMs - startingElapsed;
+  if (remaining > 0) await page.clock.runFor(remaining);
+  const latest = await runtimeSnapshot(page);
+  const hero = latest.scenes.hero;
+  const elapsedError = Math.abs(
+    hero.phaseElapsedMs - experienceCheckpointElapsedMs,
+  );
+  const targetError = Math.abs(hero.targetFrame - experienceCheckpointTarget);
+  if (
+    hero.phase !== "playing" ||
+    elapsedError > 0.001 ||
+    targetError > 0.02 ||
+    !Number.isFinite(hero.displayFrame) ||
+    hero.displayFrame < 0 ||
+    hero.displayFrame > hero.targetFrame
+  ) {
+    throw new Error(
+      `Checkpoint '${name}' missed the canonical playing sample; phase=${hero.phase}, elapsed=${hero.phaseElapsedMs}, target=${hero.targetFrame}, expectedElapsed=${experienceCheckpointElapsedMs}, expectedTarget=${experienceCheckpointTarget}, display=${hero.displayFrame}`,
+    );
+  }
+  return latest;
+}
+
 async function alignToVsync(page: Page): Promise<void> {
   const now = await page.evaluate(() => performance.now());
-  const remainder = now % frameMs;
-  const wait = remainder < 0.05 ? 0 : frameMs - remainder;
+  const remainder = now % inspectionFrameMs;
+  const wait = remainder < 0.05 ? 0 : inspectionFrameMs - remainder;
   if (wait > 0.05) await page.clock.runFor(wait);
 }
 
@@ -362,14 +479,38 @@ async function assertScrollTarget(
   page: Page,
   selector: string,
   previousScrollY: number,
+  options: { requireProgress?: boolean } = {},
 ): Promise<void> {
   await page.evaluate((targetSelector) => {
     const target = document.querySelector<HTMLElement>(targetSelector);
     if (!target) throw new Error(`Missing scroll target ${targetSelector}`);
+    const root = document.documentElement;
+    const body = document.body;
+    const previousRootBehavior = root.style.scrollBehavior;
+    const previousBodyBehavior = body.style.scrollBehavior;
+    // The normal exit uses smooth scrolling. Freeze any in-flight animation,
+    // then derive the canonical position from the target's live geometry;
+    // offsetTop is wrong for sections with a negative visual margin.
+    root.style.scrollBehavior = "auto";
+    body.style.scrollBehavior = "auto";
+    window.scrollTo({ top: window.scrollY, behavior: "auto" });
+    const desired = Math.max(
+      0,
+      window.scrollY + target.getBoundingClientRect().top - 64,
+    );
     window.scrollTo({
-      top: Math.max(0, target.offsetTop - 64),
+      top: desired,
       behavior: "auto",
     });
+    let targetTop = target.getBoundingClientRect().top;
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      const delta = targetTop - 64;
+      if (Math.abs(delta) <= 1) break;
+      window.scrollBy({ top: delta, behavior: "auto" });
+      targetTop = target.getBoundingClientRect().top;
+    }
+    root.style.scrollBehavior = previousRootBehavior;
+    body.style.scrollBehavior = previousBodyBehavior;
   }, selector);
   const state = await page.evaluate((targetSelector) => {
     const target = document.querySelector<HTMLElement>(targetSelector);
@@ -383,8 +524,10 @@ async function assertScrollTarget(
     };
   }, selector);
   expect(state).not.toBeNull();
-  expect(state!.scrollY).toBeGreaterThan(previousScrollY + 16);
-  expect(state!.top).toBeGreaterThanOrEqual(-1);
+  if (options.requireProgress !== false)
+    expect(state!.scrollY).toBeGreaterThan(previousScrollY + 16);
+  expect(state!.top).toBeGreaterThanOrEqual(63);
+  expect(state!.top).toBeLessThanOrEqual(65);
   expect(state!.top).toBeLessThan(state!.viewportHeight);
   expect(state!.bottom).toBeGreaterThan(0);
 }
@@ -702,6 +845,7 @@ test("capture deterministic visual convergence report", async ({
         phase: current.scenes.hero.phase,
         targetFrame: current.scenes.hero.targetFrame,
         displayFrame: current.scenes.hero.displayFrame,
+        playbackCompleted: current.scenes.hero.playbackCompleted,
         experienceOpacity: current.scenes.hero.overlays.experienceOpacity,
         computedExperienceOpacity: visual.heroExperience.opacity,
         experience: copySnapshot(visual.heroExperience),
@@ -725,6 +869,7 @@ test("capture deterministic visual convergence report", async ({
         0.02 &&
       snapshot.scenes.hero.renderedFrame === HERO_CONTRACT.introEndFrame,
   );
+  await settleHeroFrame(page, "hero-role", HERO_CONTRACT.introEndFrame);
   const roleObservation = await capture("hero-role");
   expect(roleObservation.hero.experience?.text).toContain("14+");
 
@@ -734,36 +879,102 @@ test("capture deterministic visual convergence report", async ({
       new WheelEvent("wheel", { deltaY: 100, cancelable: true }),
     ),
   );
-  const experience = await seekSemantic(
+  const playingBoundary = await observePlayingBoundary(
     page,
     "hero-experience",
-    experienceSeekMs,
-    (snapshot) =>
-      snapshot.scenes.hero.phase === "playing" &&
-      snapshot.scenes.hero.targetFrame >=
-        MOBILE_HERO_CONTRACT.experience.peak &&
-      snapshot.scenes.hero.targetFrame <
-        MOBILE_HERO_CONTRACT.experience.fadeOut,
   );
-  expect(experience.scenes.hero.targetFrame).toBeGreaterThanOrEqual(
-    MOBILE_HERO_CONTRACT.experience.peak,
+  const experience = await advancePlayingCheckpoint(
+    page,
+    "hero-experience",
+    playingBoundary,
   );
   await capture("hero-experience");
 
-  await seekSemantic(
-    page,
-    "hero-terminal",
-    HERO_CONTRACT.playbackDurationMs - experienceSeekMs + 500,
-    (snapshot) =>
-      snapshot.scenes.hero.phase === "complete" &&
-      Math.abs(snapshot.scenes.hero.targetFrame - neutralTerminalFrame) <
-        0.02 &&
-      Math.abs(snapshot.scenes.hero.renderedFrame - neutralTerminalFrame) <= 1,
-  );
+  let terminal = await runtimeSnapshot(page);
+  for (
+    let step = 0;
+    step < Math.ceil(5_000 / inspectionFrameMs);
+    step += 1
+  ) {
+    if (terminal.scenes.hero.phase === "complete") break;
+    await page.clock.runFor(inspectionFrameMs);
+    terminal = await runtimeSnapshot(page);
+  }
+  expect(terminal.scenes.hero.phase).toBe("complete");
+  expect(terminal.scenes.hero.playbackCompleted).toBe(true);
+  await settleHeroFrame(page, "hero-terminal", neutralTerminalFrame);
   await capture("hero-terminal");
 
-  const beforeAbout = observations.at(-1)!.probe.document.scrollY;
-  await assertScrollTarget(page, "#about", beforeAbout);
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 100, cancelable: true }),
+    ),
+  );
+  await expect
+    .poll(async () => (await runtimeSnapshot(page)).scenes.hero.phase)
+    .toBe("exit-hold");
+  await page.clock.runFor(HERO_CONTRACT.exitHoldDurationMs);
+  const released = await runtimeSnapshot(page);
+  expect(released.scenes.hero).toMatchObject({
+    phase: "released",
+    playbackCompleted: true,
+  });
+  let aboutState = await page.evaluate(() => {
+    const target = document.querySelector<HTMLElement>("#about");
+    if (!target) return null;
+    const box = target.getBoundingClientRect();
+    const style = getComputedStyle(target);
+    return {
+      scrollY: window.scrollY,
+      targetScrollY: target.offsetTop,
+      top: box.top,
+      bottom: box.bottom,
+      visible:
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        Number.parseFloat(style.opacity || "1") > 0 &&
+        box.width > 0 &&
+        box.height > 0,
+    };
+  });
+  let stableAtTarget = 0;
+  for (
+    let elapsed = 0;
+    elapsed < 5_000 && stableAtTarget < 2;
+    elapsed += 100
+  ) {
+    await page.clock.runFor(100);
+    aboutState = await page.evaluate(() => {
+      const target = document.querySelector<HTMLElement>("#about");
+      if (!target) return null;
+      const box = target.getBoundingClientRect();
+      const style = getComputedStyle(target);
+      return {
+        scrollY: window.scrollY,
+        targetScrollY: target.offsetTop,
+        top: box.top,
+        bottom: box.bottom,
+        visible:
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number.parseFloat(style.opacity || "1") > 0 &&
+          box.width > 0 &&
+          box.height > 0,
+      };
+    });
+    if (aboutState && Math.abs(aboutState.scrollY - aboutState.targetScrollY) <= 1)
+      stableAtTarget += 1;
+    else stableAtTarget = 0;
+  }
+  expect(
+    stableAtTarget,
+    `Native smooth scroll did not reach #about's target within 5000ms; state=${JSON.stringify(aboutState)}`,
+  ).toBeGreaterThanOrEqual(2);
+  expect(aboutState).not.toBeNull();
+  expect(aboutState!.top).toBeGreaterThanOrEqual(-1);
+  expect(aboutState!.top).toBeLessThanOrEqual(1);
+  expect(aboutState!.bottom).toBeGreaterThan(0);
+  expect(aboutState!.visible).toBe(true);
   await capture("below-hero");
   const beforeTimeline = (await deepVisualProbe(page)).document.scrollY;
   await assertScrollTarget(page, "#timeline", beforeTimeline);

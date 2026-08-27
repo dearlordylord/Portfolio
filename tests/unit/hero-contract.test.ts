@@ -213,6 +213,36 @@ describe("mobile hero contract", () => {
     });
   });
 
+  it.each(["complete", "exit-hold"] as const)(
+    "keeps the terminal experience copy visible after the hero finishes (%s)",
+    (phase) => {
+      expect(
+        sampleMobileHeroPresentation({
+          phase,
+          targetFrame: HERO_CONTRACT.endFrame,
+          playbackCompleted: true,
+        }),
+      ).toMatchObject({ roleOpacity: 0, experienceOpacity: 1 });
+    },
+  );
+
+  it("keeps the terminal copy through released only after observed playback completion", () => {
+    expect(
+      sampleMobileHeroPresentation({
+        phase: "released",
+        targetFrame: HERO_CONTRACT.endFrame,
+        playbackCompleted: true,
+      }),
+    ).toMatchObject({ roleOpacity: 0, experienceOpacity: 1 });
+    expect(
+      sampleMobileHeroPresentation({
+        phase: "released",
+        targetFrame: HERO_CONTRACT.endFrame,
+        playbackCompleted: false,
+      }),
+    ).toMatchObject({ roleOpacity: 0, experienceOpacity: 0 });
+  });
+
   it.each([
     ["loading", "assets-ready", "intro"],
     ["intro", "intro-complete", "ready"],

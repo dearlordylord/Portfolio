@@ -160,6 +160,7 @@ function observation(
     browserChrome: options.browserChrome,
     hero: {
       phase: defaultPhase,
+      playbackCompleted: true,
       targetFrame: 149,
       displayFrame: 149,
       experienceOpacity: 1,
@@ -439,6 +440,31 @@ describe("visual inspection model", () => {
         ).status,
       ).toBe("unmet");
     }
+  });
+
+  it("does not accept released terminal copy without the playback completion latch", () => {
+    expect(
+      finding(
+        replaceCheckpoint(
+          "hero-terminal",
+          observation("hero-terminal", {
+            hero: { playbackCompleted: false },
+          }),
+        ),
+        "R3",
+      ).status,
+    ).toBe("unmet");
+    expect(
+      finding(
+        replaceCheckpoint(
+          "hero-return",
+          observation("hero-return", {
+            hero: { playbackCompleted: false },
+          }),
+        ),
+        "R3",
+      ).status,
+    ).toBe("unmet");
   });
 
   it("requires a complete terminal phase and the full delayed return schedule in one synthetic scenario", () => {

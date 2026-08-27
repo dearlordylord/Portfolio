@@ -25,6 +25,7 @@ const HERO_EXIT_HOLD_MS = HERO_CONTRACT.exitHoldDurationMs;
 const DEFAULT_IMAGE_PREFIX = "Кадры/frame_";
 const DEFAULT_IMAGE_SUFFIX = "_delay-0.067s.webp";
 const DEFAULT_NOISE_SOURCE = "Кадры/ШУМ.png";
+const DEFAULT_HERO_BACKGROUND = "#edeef6";
 const MAX_DIAGNOSTIC_EVENTS = 128;
 
 type HeroElementId =
@@ -83,6 +84,10 @@ export type HeroSceneSnapshot = {
   reducedMotion: boolean;
   exitHoldPending: boolean;
   phaseStartTime: number | null;
+  /** Elapsed time in the current timed phase, in milliseconds. */
+  phaseElapsedMs: number;
+  /** True only after the playing timeline has reached its terminal frame. */
+  playbackCompleted: boolean;
   targetFrame: number;
   displayFrame: number;
   renderedFrame: number;
@@ -214,6 +219,18 @@ function getDocument(options: HeroSceneOptions): Document {
   throw new Error("Hero scene requires a Document outside a browser");
 }
 
+function readHeroBackground(browserWindow: Window, browserDocument: Document): string {
+  try {
+    const configured = browserWindow
+      .getComputedStyle(browserDocument.documentElement)
+      .getPropertyValue("--bg")
+      .trim();
+    return configured || DEFAULT_HERO_BACKGROUND;
+  } catch {
+    return DEFAULT_HERO_BACKGROUND;
+  }
+}
+
 function supportsMediaListener(
   query: MediaQueryList,
 ): query is MediaQueryList & {
@@ -254,6 +271,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   };
   const context = elements.canvas.getContext("2d")!;
   if (!context) throw new Error("Hero scene requires a 2D canvas context");
+  // Resolve the page surface once. Rendering then uses the same CSS token
+  // without forcing a computed-style read on every animation frame.
+  const heroBackground = readHeroBackground(browserWindow, browserDocument);
 
   // The shared lifecycle registrar owns preference state in the page
   // composition. MatchMedia is intentionally sampled only for a direct
@@ -278,6 +298,10 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   let phaseStartTime: number | null = null;
   let targetFrame: number = reducedMotion ? HERO_CONTRACT.endFrame : HERO_CONTRACT.startFrame;
   let displayFrame = targetFrame;
+  // This is deliberately distinct from `phase`: a direct navigation can
+  // release an in-progress hero, while only a completed playback earns the
+  // durable terminal experience copy.
+  let playbackCompleted = false;
   let pointerYNormalized = 0.5;
   let ctaAvailable = reducedMotion;
   let exitHoldTimer: TimerHandle | null = null;
@@ -315,6 +339,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     },
   );
   const noiseImage = noiseImageFactory();
+  let noiseRequested = false;
   const scene = scheduler.register(sceneName, onFrame, { active: false });
 
   function nowMs(): number {
@@ -374,6 +399,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function canvasRect(): DOMRect {
     return elements.canvas.getBoundingClientRect();
+  }
+
+  function ensureNoiseLoaded(): void {
+    if (noiseRequested || mobileGeometry.mobile) return;
+    noiseRequested = true;
+    noiseImage.src = options.noiseSource ?? DEFAULT_NOISE_SOURCE;
   }
 
   function syncGeometry(force: boolean): void {
@@ -498,18 +529,10 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function drawBackdrop(cw: number, ch: number): void {
-    const gradient = context.createRadialGradient(
-      cw / 2,
-      ch * 0.5,
-      0,
-      cw / 2,
-      ch * 0.5,
-      Math.max(cw, ch) * 0.75,
-    );
-    gradient.addColorStop(0, "#eae7f3");
-    gradient.addColorStop(0.6, "#ebecf4");
-    gradient.addColorStop(1, "#edeef6");
-    context.fillStyle = gradient;
+    // Transparent hero frames must reveal the same surface as the rest of
+    // the first screen. A gradient here made the background visibly drift
+    // across the canvas and left transparent photo areas on different hues.
+    context.fillStyle = heroBackground;
     context.fillRect(0, 0, cw, ch);
   }
 
@@ -555,7 +578,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       context.drawImage(image, (cw - width) / 2, ch - height, width, height);
     }
 
-    if (noiseImage.complete && noiseImage.naturalWidth > 0 && noiseImage.naturalHeight > 0) {
+    if (
+      !isMobile &&
+      noiseImage.complete &&
+      noiseImage.naturalWidth > 0 &&
+      noiseImage.naturalHeight > 0
+    ) {
       context.globalAlpha = 0.88;
       context.globalCompositeOperation = "multiply";
       context.drawImage(noiseImage, 0, 0, cw, ch);
@@ -572,6 +600,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
           targetFrame,
           reducedMotion,
           ctaAvailable,
+          playbackCompleted,
         })
       : null;
     const roleOpacity = reducedMotion
@@ -645,6 +674,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         transition("intro-complete", "intro timeline complete");
       } else if (phase === "playing" && sample.progress >= 1) {
         targetFrame = HERO_CONTRACT.endFrame;
+        playbackCompleted = true;
         transition("playback-complete", "playback timeline complete");
       }
     } else if (phase === "ready" || phase === "complete" || phase === "exit-hold") {
@@ -744,11 +774,13 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function onResize(): void {
     syncGeometry(false);
+    ensureNoiseLoaded();
     render();
   }
 
   function onOrientationChange(): void {
     syncGeometry(true);
+    ensureNoiseLoaded();
     render();
   }
 
@@ -841,7 +873,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   syncGeometry(true);
-  noiseImage.src = options.noiseSource ?? DEFAULT_NOISE_SOURCE;
+  ensureNoiseLoaded();
   for (let index = 0; index < HERO_CONTRACT.totalFrameCount; index += 1) loadImage(index);
 
   listen(browserWindow, "resize", onResize);
@@ -890,7 +922,13 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     const schedulerState = scheduler.diagnostics();
     const cta = sampleHeroCTA({ phase, targetFrame, reducedMotion, latched: ctaAvailable });
     const mobilePresentation = mobileGeometry.mobile
-      ? sampleMobileHeroPresentation({ phase, targetFrame, reducedMotion, ctaAvailable })
+      ? sampleMobileHeroPresentation({
+          phase,
+          targetFrame,
+          reducedMotion,
+          ctaAvailable,
+          playbackCompleted,
+        })
       : null;
     return {
       phase,
@@ -902,6 +940,8 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       reducedMotion,
       exitHoldPending: exitHoldTimer !== null,
       phaseStartTime,
+      phaseElapsedMs,
+      playbackCompleted,
       targetFrame,
       displayFrame,
       renderedFrame: clamp(Math.round(displayFrame), HERO_CONTRACT.startFrame, HERO_CONTRACT.endFrame),
