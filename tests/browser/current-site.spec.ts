@@ -643,7 +643,7 @@ test("desktop particle canvas tracks live viewport and DPR without coordinate sq
   }
 });
 
-test("mobile hero does not cancel native touch scrolling", async ({ page }, testInfo) => {
+test("mobile hero consumes early touch input before the semantic handoff", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Touch scrolling is covered by mobile projects");
   await prepareLocalPage(page);
   await installPausedClock(page);
@@ -674,7 +674,7 @@ test("mobile hero does not cancel native touch scrolling", async ({ page }, test
     window.dispatchEvent(event);
     return event.defaultPrevented;
   });
-  expect(defaultPrevented).toBe(false);
+  expect(defaultPrevented).toBe(true);
 });
 
 test("mobile native scrolling advances over hero and Skills while an offscreen hero stays inert", async ({ page }, testInfo) => {
@@ -684,10 +684,18 @@ test("mobile native scrolling advances over hero and Skills while an offscreen h
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
     waitUntil: "domcontentloaded",
   });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1_600);
 
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "auto" }));
   const heroStart = await page.evaluate(() => window.scrollY);
   await page.mouse.move(195, 500);
+  await page.mouse.wheel(0, 420);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(heroStart);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("playing");
+  await page.clock.runFor(1_400);
   await page.mouse.wheel(0, 420);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(heroStart);
 

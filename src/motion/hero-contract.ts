@@ -27,6 +27,20 @@ export const HERO_CONTRACT = Object.freeze({
   exitHoldDurationMs: 750,
 });
 
+/**
+ * Union of the alpha>8 bounds measured across all 150 mobile source frames.
+ * The coordinates are in the natural 900×507 image space. Keeping the
+ * envelope beside the placement contract means a future art replacement must
+ * update one auditable geometry record instead of silently re-centering from
+ * whichever frame happened to be ready first.
+ */
+export const MOBILE_HERO_ASSET_ENVELOPE = Object.freeze({
+  naturalWidth: 900,
+  naturalHeight: 507,
+  left: 166,
+  right: 756,
+});
+
 export const MOBILE_HERO_CONTRACT = Object.freeze({
   boundaryRatio: 0.85,
   stageTopRatio: 0.38,
@@ -34,6 +48,15 @@ export const MOBILE_HERO_CONTRACT = Object.freeze({
   desktopCopyTopRatio: 0.38,
   hintOffset: 62,
   maxCanvasDpr: 2,
+  // The mobile cutout is intentionally 40% larger than the former 0.55 fit
+  // scale. The rendered alpha bounds, rather than this token alone, are the
+  // browser acceptance seam for N2.
+  assetScale: 0.77,
+  // Center the union of every frame's alpha>8 horizontal bounds, not the
+  // ready frame alone. (166 + 756) / (2 × 900) = 0.512222…
+  assetVisualCenterRatio:
+    (MOBILE_HERO_ASSET_ENVELOPE.left + MOBILE_HERO_ASSET_ENVELOPE.right) /
+    (2 * MOBILE_HERO_ASSET_ENVELOPE.naturalWidth),
   // Mobile groups occupy one slot. The role reaches zero exactly when the
   // experience begins, so replacement never renders both groups at once.
   role: { fadeIn: 5, peak: 14, fadeOut: 48, end: 58 },
@@ -59,6 +82,16 @@ export const HERO_LAYOUT_CONTRACT = Object.freeze({
   boundaryRatio: MOBILE_HERO_CONTRACT.boundaryRatio,
   mobileStageTopRatio: MOBILE_HERO_CONTRACT.stageTopRatio,
   mobileCopyTopRatio: MOBILE_HERO_CONTRACT.copyTopRatio,
+  // A small, fixed CSS-pixel nudge keeps the mobile copy legible without
+  // changing its relationship to the stable first-screen geometry when the
+  // viewport has enough room for the complete experience group.
+  mobileCopyOffsetPx: 24,
+  // Measured upper bound of the mobile #st2 rendered copy at the 320px text
+  // breakpoint (124.9px) plus roughly 3px of clearance. The requested nudge
+  // is capped against stageTop - this reserve on short viewports, so the
+  // larger experience group stays above the animation stage while retaining
+  // as much of the requested downward shift as the viewport permits.
+  mobileCopySafeHeightPx: 128,
   desktopStageTopRatio: 0,
   desktopCopyTopRatio: MOBILE_HERO_CONTRACT.desktopCopyTopRatio,
   aboutOverlapRatio: 1 - MOBILE_HERO_CONTRACT.boundaryRatio,
@@ -137,6 +170,67 @@ export type HeroLayout = {
   backingStore: { width: number; height: number; effectiveDpr: number };
 };
 
+export type MobileHeroAssetPlacementInput = {
+  canvasWidth: number;
+  canvasHeight: number;
+  naturalWidth: number;
+  naturalHeight: number;
+};
+
+export type MobileHeroAssetPlacement = {
+  scale: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * Pure mobile image placement. The renderer and clipping tests use the same
+ * destination math, while the full-frame alpha envelope remains an
+ * independent acceptance fact rather than a canvas-size assumption.
+ */
+export function computeMobileHeroAssetPlacement(
+  input: MobileHeroAssetPlacementInput,
+): MobileHeroAssetPlacement {
+  for (const [name, value] of Object.entries(input)) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new RangeError(`Mobile hero asset ${name} must be finite and positive`);
+    }
+  }
+  const scale =
+    Math.max(input.canvasWidth / input.naturalWidth, input.canvasHeight / input.naturalHeight) *
+    MOBILE_HERO_CONTRACT.assetScale;
+  const width = input.naturalWidth * scale;
+  const height = input.naturalHeight * scale;
+  const x = width > input.canvasWidth
+    ? input.canvasWidth / 2 - input.naturalWidth * scale * MOBILE_HERO_CONTRACT.assetVisualCenterRatio
+    : (input.canvasWidth - width) / 2;
+  return {
+    scale,
+    x,
+    y: input.canvasHeight - height,
+    width,
+    height,
+  };
+}
+
+/**
+ * Mobile copy anchor with a bounded downward nudge. The cap is a layout
+ * safety rule, not an animation state: it keeps both replacement groups in
+ * the first-screen copy slot even at short 320×480 viewports.
+ */
+export function computeMobileHeroCopyTop(stableHeight: number): number {
+  if (!Number.isFinite(stableHeight) || stableHeight <= 0) {
+    throw new RangeError("Mobile hero stableHeight must be finite and positive");
+  }
+  const requestedTop =
+    stableHeight * HERO_LAYOUT_CONTRACT.mobileCopyTopRatio + HERO_LAYOUT_CONTRACT.mobileCopyOffsetPx;
+  const stageTop = stableHeight * HERO_LAYOUT_CONTRACT.mobileStageTopRatio;
+  const safeTop = Math.max(0, stageTop - HERO_LAYOUT_CONTRACT.mobileCopySafeHeightPx);
+  return Math.min(requestedTop, safeTop);
+}
+
 /** Backwards-compatible name for existing mobile callers. */
 export type StableMobileHeroLayout = HeroLayout;
 
@@ -155,11 +249,9 @@ export function computeHeroLayout(input: HeroLayoutInput): HeroLayout {
       ? HERO_LAYOUT_CONTRACT.mobileStageTopRatio
       : HERO_LAYOUT_CONTRACT.desktopStageTopRatio
   );
-  const copyTop = input.stableHeight * (
-    mode === "mobile"
-      ? HERO_LAYOUT_CONTRACT.mobileCopyTopRatio
-      : HERO_LAYOUT_CONTRACT.desktopCopyTopRatio
-  );
+  const copyTop = mode === "mobile"
+    ? computeMobileHeroCopyTop(input.stableHeight)
+    : input.stableHeight * HERO_LAYOUT_CONTRACT.desktopCopyTopRatio;
   const effectiveDpr = Math.min(Math.max(input.dpr, 1), HERO_LAYOUT_CONTRACT.maxCanvasDpr);
   const stage = rect(0, stageTop, input.width, boundaryY - stageTop);
   const boundary = rect(0, boundaryY, input.width, 0);
@@ -393,3 +485,42 @@ export const reduceHeroPhase = transitionHeroPhase;
 
 /** Lower-camel-case alias matching the existing `sample*` naming style. */
 export const sampleHeroCta = sampleHeroCTA;
+
+/**
+ * Returns whether a mobile downward gesture must stay inside the hero. The
+ * lock covers loading/intro/ready and the first part of playback. Playback's
+ * semantic handoff is the frame at which the experience copy begins replacing
+ * UX/UI; terminal exit remains consumed because it is a scripted navigation
+ * action rather than native scrolling.
+ */
+export function mobileHeroConsumesDownwardScroll(input: {
+  phase: HeroPhase;
+  targetFrame: number;
+  reducedMotion?: boolean;
+}): boolean {
+  if (!Number.isFinite(input.targetFrame)) {
+    throw new RangeError("Mobile hero scroll targetFrame must be finite");
+  }
+  if (input.reducedMotion === true || input.phase === "reduced") return false;
+  if (input.phase === "loading" || input.phase === "intro" || input.phase === "ready") return true;
+  if (input.phase === "playing") {
+    return input.targetFrame < MOBILE_HERO_CONTRACT.experience.fadeIn;
+  }
+  return input.phase === "complete" || input.phase === "exit-hold";
+}
+
+export type MobileHeroDownwardScrollDisposition = "consume" | "native-next-gesture";
+
+/**
+ * Names the browser handoff explicitly. A dispatched touch event cannot be
+ * retroactively released after preventDefault(); therefore the renderer's
+ * first native opportunity is the next downward gesture once frame 58 has
+ * been reached. This is deliberately not a same-touch-gesture claim.
+ */
+export function mobileHeroDownwardScrollDisposition(input: {
+  phase: HeroPhase;
+  targetFrame: number;
+  reducedMotion?: boolean;
+}): MobileHeroDownwardScrollDisposition {
+  return mobileHeroConsumesDownwardScroll(input) ? "consume" : "native-next-gesture";
+}

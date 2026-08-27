@@ -1,6 +1,9 @@
 import {
   HERO_CONTRACT,
   HERO_LAYOUT_CONTRACT,
+  MOBILE_HERO_CONTRACT,
+  computeMobileHeroAssetPlacement,
+  mobileHeroDownwardScrollDisposition,
   computeHeroLayout,
   sampleHeroCTA,
   sampleHeroTimeline,
@@ -579,19 +582,29 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (validImage) {
       const iw = image.naturalWidth;
       const ih = image.naturalHeight;
-      const scale = Math.max(cw / iw, ch / ih) * (isMobile ? 0.55 : 0.59);
-      const width = iw * scale;
-      const height = ih * scale;
+      const mobilePlacement = isMobile
+        ? computeMobileHeroAssetPlacement({
+            canvasWidth: cw,
+            canvasHeight: ch,
+            naturalWidth: iw,
+            naturalHeight: ih,
+          })
+        : null;
+      const scale = mobilePlacement?.scale ?? Math.max(cw / iw, ch / ih) * 0.59;
+      const width = mobilePlacement?.width ?? iw * scale;
+      const height = mobilePlacement?.height ?? ih * scale;
+      const destinationX = mobilePlacement?.x ?? (cw - width) / 2;
+      const destinationY = mobilePlacement?.y ?? ch - height;
       renderedAsset = {
         key: selection.key!,
         source: image.currentSrc || image.src,
-        destination: { x: (cw - width) / 2, y: ch - height, width, height },
+        destination: { x: destinationX, y: destinationY, width, height },
         naturalWidth: iw,
         naturalHeight: ih,
       };
       context.globalAlpha = 1;
       context.globalCompositeOperation = "source-over";
-      context.drawImage(image, (cw - width) / 2, ch - height, width, height);
+      context.drawImage(image, destinationX, destinationY, width, height);
     }
 
     if (
@@ -752,6 +765,20 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function onWheel(event: WheelEvent): void {
     if (disposed || reducedMotion || !isVisible || event.deltaY <= 0) return;
+    // Mobile owns the downward input until the semantic copy transition.
+    // This includes loading and intro: allowing native scrolling there would
+    // release the hero before it has established its first-screen state. At
+    // frame 58 the current event is simply left native; touch browsers cannot
+    // retroactively release an earlier, already-prevented gesture.
+    if (
+      mobileGeometry.mobile &&
+      mobileHeroDownwardScrollDisposition({ phase, targetFrame, reducedMotion }) === "consume"
+    ) {
+      event.preventDefault();
+      if (phase === "ready") advanceFromReady("wheel-down");
+      else if (phase === "complete") goToAbout("wheel-down");
+      return;
+    }
     if (phase !== "ready" && phase !== "complete") return;
     event.preventDefault();
     if (phase === "ready") advanceFromReady("wheel-down");
@@ -773,6 +800,13 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     pointerYNormalized = clamp(touch.clientY / Math.max(1, browserWindow.innerHeight), 0, 1);
     if (touchStartY === null) touchStartY = touch.clientY;
     const delta = touchStartY - touch.clientY;
+    if (
+      mobileGeometry.mobile &&
+      delta > 0 &&
+      mobileHeroDownwardScrollDisposition({ phase, targetFrame, reducedMotion }) === "consume"
+    ) {
+      event.preventDefault();
+    }
     if (delta < 30 || (phase !== "ready" && phase !== "complete")) return;
     touchStartY = touch.clientY;
     if (phase === "ready") advanceFromReady("touch-up");
@@ -897,7 +931,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   listen(browserWindow, "mousemove", onMouseMove);
   listen(browserWindow, "wheel", onWheel, { passive: false });
   listen(browserWindow, "touchstart", onTouchStart, { passive: true });
-  listen(browserWindow, "touchmove", onTouchMove, { passive: true });
+  listen(browserWindow, "touchmove", onTouchMove, { passive: false });
   listen(browserWindow, "touchend", onTouchEnd, { passive: true });
   browserDocument.querySelectorAll("nav a").forEach((link) => {
     link.addEventListener("click", onDirectNavigation);

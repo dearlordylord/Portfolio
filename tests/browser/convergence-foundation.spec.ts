@@ -68,7 +68,7 @@ async function renderedContentObservation(
     canvas.height = Math.max(1, Math.round(image.naturalHeight * inspectionScale));
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("2d context unavailable for alpha-bound measurement");
-    context.drawImage(image, 0, 0);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
     let left = canvas.width;
     let top = canvas.height;
