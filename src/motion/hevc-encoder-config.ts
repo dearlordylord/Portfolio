@@ -14,7 +14,7 @@ export const HEVC_ENCODER_DEFAULTS = {
   averageBitRate: 8_000_000,
   alphaMode: "premultiplied",
   codec: "hevcWithAlpha",
-  container: "mp4",
+  container: "mov",
   inputPattern: "frame_%03d_delay-0.067s.webp",
 } as const;
 
@@ -193,7 +193,7 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     errors.push("encode must be an object");
   } else {
     if (manifest.encode.codec !== HEVC_ENCODER_DEFAULTS.codec) errors.push("encode.codec must be hevcWithAlpha");
-    if (manifest.encode.container !== HEVC_ENCODER_DEFAULTS.container) errors.push("encode.container must be mp4");
+    if (manifest.encode.container !== HEVC_ENCODER_DEFAULTS.container) errors.push("encode.container must be mov");
     if (manifest.encode.alphaMode !== HEVC_ENCODER_DEFAULTS.alphaMode) errors.push("encode.alphaMode must be premultiplied");
     if (!finite(manifest.encode.alphaQuality) || manifest.encode.alphaQuality < 0 || manifest.encode.alphaQuality > 1) {
       errors.push("encode.alphaQuality must be between 0 and 1");
@@ -210,8 +210,8 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     errors.push("output must be an object");
   } else {
     const output = manifest.output;
-    if (typeof output.fileName !== "string" || !/^[^/\\]+\.mp4$/i.test(output.fileName)) {
-      errors.push("output.fileName must be a basename ending in .mp4");
+    if (typeof output.fileName !== "string" || !/^[^/\\]+\.mov$/i.test(output.fileName)) {
+      errors.push("output.fileName must be a basename ending in .mov");
     }
     if (!integer(output.bytes) || output.bytes <= 0) errors.push("output.bytes must be positive");
     if (typeof output.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(output.sha256)) {
@@ -223,8 +223,8 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     if (!closeToExpected(output.durationSeconds, expectedHevcDurationSeconds())) {
       errors.push("output.durationSeconds does not match the encoder contract");
     }
-    if (output.codec !== "hvc1" && output.codec !== "hevcWithAlpha") {
-      errors.push("output.codec must identify HEVC");
+    if (output.codec !== "hvc1" && output.codec !== "muxa") {
+      errors.push("output.codec must be the measured hvc1 or muxa fourCC");
     }
     if (output.containsAlphaChannel !== true) {
       errors.push("output.containsAlphaChannel must be true from AVFoundation validation");

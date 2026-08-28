@@ -76,7 +76,7 @@ const MP4_BYTES = 1_839_215;
 const HQ_WEBM_BYTES = 0;
 const HQ_MP4_BYTES = 1_796_188;
 // Deliberately zero until an Apple-authoring pipeline supplies a compliant
-// HEVC-with-alpha file. `hevcSrc=/same-origin/path.mp4` enables a real-device
+// HEVC-with-alpha QuickTime file. `hevcSrc=/same-origin/path.mov` enables a real-device
 // import without allowing an unreviewed cross-origin asset into the gate.
 const HEVC_BYTES = 0;
 const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-v1";
@@ -94,7 +94,7 @@ const WEBM_SOURCE = "/video-prototype/hero-alpha-vp9.webm";
 const MP4_SOURCE = "/video-prototype/hero-color-matte.mp4";
 const HQ_WEBM_SOURCE = "/video-prototype/hq-hero-alpha-vp9.webm";
 const HQ_MP4_SOURCE = "/video-prototype/hq-hero-color-matte.mp4";
-const HEVC_DEFAULT_SOURCE = "/video-prototype/hero-hevc-alpha.mp4";
+const HEVC_DEFAULT_SOURCE = "/video-prototype/hero-hevc-alpha.mov";
 const prototypeParams = new URLSearchParams(window.location.search);
 // Continuous playback is the comparison default. The production-style
 // checkpoint at frame 31 is opt-in so a bare prototype URL cannot look broken.

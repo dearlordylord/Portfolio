@@ -26,7 +26,7 @@ writes no media or manifest. The actual export is:
 npm run prototype:encode:hevc-alpha -- --force
 ```
 
-The command uses `AVAssetWriter` directly, with premultiplied alpha, target
+The command uses `AVAssetWriter` directly to write a QuickTime MOV, with premultiplied alpha, target
 alpha quality `1.0` (VideoToolbox's highest quality), temporal compression,
 frame reordering disabled, open GOP disabled, and a maximum keyframe interval
 of 15 frames (one second at 15 fps), with the explicit average bitrate and
@@ -50,16 +50,16 @@ are recorded in the manifest. A writer rejection, missing/opaque input alpha,
 failed sample/decoded-alpha validation, or manifest/SHA failure deletes the
 partial staging output and exits nonzero.
 
-The command emits a deterministic JSON sidecar beside the MP4 containing the
+The command emits a deterministic JSON sidecar beside the MOV containing the
 source/encode settings, average bitrate, ordered source-set SHA-256 (each
 filename + NUL + file bytes in ascending frame order), measured output facts,
 decoded alpha range, byte count, and output SHA-256. It also prints exact copy
 instructions. The intended handoff is:
 
-1. Keep the MP4 and manifest under ignored staging while reviewing the
+1. Keep the MOV and manifest under ignored staging while reviewing the
    transparent edges and seek checkpoints on macOS Safari and iOS Safari.
 2. After that review, copy the exact staged file to
-   `public/video-prototype/hero-hevc-alpha.mp4`.
+   `public/video-prototype/hero-hevc-alpha.mov`.
 3. Add a checked-in manifest binding the immutable URL and printed SHA-256 to
    real-device alpha evidence. The prototype query parameters are an untrusted
    manual override and do not replace this production manifest.
@@ -82,10 +82,10 @@ changes the source dimensions.
 
 Create the source from an RGBA/ProRes 4444 master, then export with Apple’s
 HEVC-with-alpha encoder through AVFoundation (the command above is the
-reproducible path; Compressor is not required). The export must use
+reproducible path; Compressor is not required) to a QuickTime `.mov`. The export must use
 the codec type `AVVideoCodecType.hevcWithAlpha` and the alpha mode appropriate
 to the master (`AVVideoAlphaChannelModePremultiplied` is Apple’s preferred GPU
-rendering form). The resulting ISO-BMFF/MOV/MP4 must satisfy Apple’s
+rendering form). The resulting QuickTime MOV must satisfy Apple’s
 [HEVC Video with Alpha Interoperability Profile](https://developer.apple.com/av-foundation/HEVC-Video-with-Alpha-Interoperability-Profile.pdf):
 
 - one HEVC video track containing paired base-color and auxiliary-alpha
@@ -98,7 +98,7 @@ rendering form). The resulting ISO-BMFF/MOV/MP4 must satisfy Apple’s
 
 Validate the export in Apple’s AVFoundation/QuickTime playback before using it
 on the web. Keep the file at a same-origin URL (or pass a same-origin
-`hevcSrc=/path/file.mp4` plus matching `hevcAssetId=asset-id` query override in
+`hevcSrc=/path/file.mov` plus matching `hevcAssetId=asset-id` query override in
 this prototype). The H renderer
 downloads a Blob in the prototype because Pages currently answers static
 video range requests with `200`; the Blob gives the hidden candidate a local

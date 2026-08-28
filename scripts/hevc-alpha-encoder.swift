@@ -142,7 +142,7 @@ private struct Options {
         let resolvedInput = inputDirectory ?? currentDirectory.appendingPathComponent("Кадры")
             .standardizedFileURL
         let resolvedOutput = outputURL ?? currentDirectory
-            .appendingPathComponent("motion-artifacts/hevc-alpha/hero-hevc-alpha.mp4")
+            .appendingPathComponent("motion-artifacts/hevc-alpha/hero-hevc-alpha.mov")
             .standardizedFileURL
         let resolvedManifest = (manifestURL ?? resolvedOutput
             .deletingPathExtension()
@@ -176,14 +176,14 @@ private let usageText = """
 Usage: npm run prototype:encode:hevc-alpha -- [options]
 
 Reads the fixed 150-frame RGBA WebP archive (900x507 at 15 fps) and writes an
-Apple HEVC-with-alpha MP4 using AVFoundation. Defaults are intentionally staged
+Apple HEVC-with-alpha QuickTime MOV using AVFoundation. Defaults are intentionally staged
 under motion-artifacts/hevc-alpha/ (ignored by git), never public production
 assets.
 
 Options:
   --input PATH                 frame directory (default: ./Кадры)
-  --output PATH                MP4 path (default: ./motion-artifacts/hevc-alpha/hero-hevc-alpha.mp4)
-  --manifest PATH              JSON sidecar path (default: alongside MP4)
+  --output PATH                MOV path (default: ./motion-artifacts/hevc-alpha/hero-hevc-alpha.mov)
+  --manifest PATH              JSON sidecar path (default: alongside MOV)
   --repo-root PATH             repository root used for tracked-output guard
   --asset-id ID                immutable asset label for the staging manifest
   --alpha-quality 0...1        VideoToolbox alpha target quality (default: 1)
@@ -456,7 +456,6 @@ private func compressionSettings(options: Options) -> [String: Any] {
         AVVideoAverageBitRateKey: options.bitrate,
         AVVideoExpectedSourceFrameRateKey: sourceFrameRate,
         kVTCompressionPropertyKey_AlphaChannelMode as String: kVTAlphaChannelMode_PremultipliedAlpha,
-        kVTCompressionPropertyKey_PreserveAlphaChannel as String: true,
         kVTCompressionPropertyKey_TargetQualityForAlpha as String: options.alphaQuality,
         kVTCompressionPropertyKey_AllowTemporalCompression as String: true,
         kVTCompressionPropertyKey_AllowFrameReordering as String: false,
@@ -486,7 +485,7 @@ private func makeWriter(at url: URL, options: Options) throws -> WriterBundle {
     let settings = outputSettings(options: options)
     let writer: AVAssetWriter
     do {
-        writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     } catch {
         throw EncoderError.unavailable("could not create AVAssetWriter: \(error.localizedDescription)")
     }
@@ -733,7 +732,7 @@ private func writeManifest(
         ),
         encode: .init(
             codec: "hevcWithAlpha",
-            container: "mp4",
+            container: "mov",
             alphaMode: "premultiplied",
             alphaQuality: Double(options.alphaQuality),
             maxKeyframeInterval: options.keyframeInterval,
@@ -778,11 +777,11 @@ private func preparePaths(options: Options) throws {
     guard FileManager.default.fileExists(atPath: options.inputDirectory.path) else {
         throw EncoderError.invalidInput("input directory does not exist: \(options.inputDirectory.path)")
     }
-    guard options.outputURL.pathExtension.lowercased() == "mp4" else {
-        throw EncoderError.usage("--output must end in .mp4")
+    guard options.outputURL.pathExtension.lowercased() == "mov" else {
+        throw EncoderError.usage("--output must end in .mov")
     }
     guard options.outputURL != options.manifestURL else {
-        throw EncoderError.usage("--manifest must not overwrite the MP4")
+        throw EncoderError.usage("--manifest must not overwrite the MOV")
     }
 
     let stagingRoot = options.repoRoot.appendingPathComponent("motion-artifacts")
@@ -831,17 +830,17 @@ private func checkWriterCapability(options: Options, at url: URL) throws {
 }
 
 private func printNextSteps(options: Options, digest: String, sourceSetSHA256: String, bytes: Int) {
-    let destination = options.repoRoot.appendingPathComponent("public/video-prototype/hero-hevc-alpha.mp4").path
+    let destination = options.repoRoot.appendingPathComponent("public/video-prototype/hero-hevc-alpha.mov").path
     print("""
 
     SHA-256: \(digest)
     Ordered source-set SHA-256: \(sourceSetSHA256)
     Bytes: \(bytes)
-    Staging MP4: \(options.outputURL.path)
+    Staging MOV: \(options.outputURL.path)
     Staging manifest: \(options.manifestURL.path)
 
     Next import/deploy steps (manual review required):
-      1. Keep the MP4 and manifest in ignored staging until Safari/iOS edge and seek tests pass.
+      1. Keep the MOV and manifest in ignored staging until Safari/iOS edge and seek tests pass.
       2. After review, copy the exact file with:
          cp -- "\(options.outputURL.path)" "\(destination)"
       3. Add a checked-in manifest binding asset ID \(options.assetID), that immutable URL, and SHA-256 \(digest) to real-device alpha evidence.
@@ -855,7 +854,7 @@ private func run(options: Options) throws {
     let urls = try frameURLs(in: options.inputDirectory)
     let sourceSetSHA256 = try orderedSourceSetSHA256(urls: urls)
     let temporaryWriterURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("portfolio-hevc-alpha-\(ProcessInfo.processInfo.globallyUniqueString).mp4")
+        .appendingPathComponent("portfolio-hevc-alpha-\(ProcessInfo.processInfo.globallyUniqueString).mov")
 
     if options.dryRun {
         let summary = try inspectInput(urls: urls)
@@ -866,7 +865,7 @@ private func run(options: Options) throws {
         print("Input alpha range: \(summary.minimumAlpha)...\(summary.maximumAlpha)")
         print("Ordered source-set SHA-256: \(sourceSetSHA256)")
         print("AVAssetWriter: canApply hevcWithAlpha + alpha settings")
-        print("No MP4 or manifest was written.")
+        print("No MOV or manifest was written.")
         return
     }
 

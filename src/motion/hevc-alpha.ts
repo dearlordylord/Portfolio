@@ -10,7 +10,7 @@
 
 import type { MediaDeliverySnapshot } from "./media-delivery";
 
-export const HEVC_ALPHA_MIME = 'video/mp4; codecs="hvc1.1.6.L93.B0"';
+export const HEVC_ALPHA_MIME = 'video/quicktime; codecs="hvc1.1.6.L93.B0"';
 
 /**
  * Maximum time the prototype gives a qualified HEVC candidate to download a

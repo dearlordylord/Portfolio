@@ -22,14 +22,14 @@ const validManifest = {
   },
   encode: {
     codec: "hevcWithAlpha",
-    container: "mp4",
+    container: "mov",
     alphaMode: "premultiplied",
     alphaQuality: 1,
     maxKeyframeInterval: 15,
     averageBitRate: 8_000_000,
   },
   output: {
-    fileName: "hero-hevc-alpha.mp4",
+    fileName: "hero-hevc-alpha.mov",
     bytes: 123_456,
     sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     width: 900,
@@ -55,6 +55,7 @@ describe("HEVC-alpha encoder configuration", () => {
       alphaQuality: 1,
       codec: "hevcWithAlpha",
       averageBitRate: 8_000_000,
+      container: "mov",
     });
     expect(frameFileName(0)).toBe("frame_000_delay-0.067s.webp");
     expect(frameFileName(149)).toBe("frame_149_delay-0.067s.webp");
@@ -70,12 +71,17 @@ describe("HEVC-alpha encoder configuration", () => {
     expect(validateHevcEncoderConfig({ width: 899 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ frameRate: 0 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ averageBitRate: 0 })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderConfig({ container: "mp4" })).toMatchObject({ valid: false });
   });
 });
 
 describe("HEVC-alpha staging manifest validation", () => {
   it("accepts a manifest whose output measurements match the source contract", () => {
     expect(validateHevcEncoderManifest(validManifest)).toEqual({ valid: true, errors: [] });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
+      output: { ...validManifest.output, codec: "muxa" },
+    })).toEqual({ valid: true, errors: [] });
   });
 
   it("requires the Apple alpha claim and measured output evidence", () => {
@@ -98,6 +104,18 @@ describe("HEVC-alpha staging manifest validation", () => {
     expect(validateHevcEncoderManifest({
       ...validManifest,
       encode: { ...validManifest.encode, averageBitRate: 0 },
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
+      encode: { ...validManifest.encode, container: "mp4" },
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
+      output: { ...validManifest.output, fileName: "hero-hevc-alpha.mp4" },
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
+      output: { ...validManifest.output, codec: "hevcWithAlpha" },
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,

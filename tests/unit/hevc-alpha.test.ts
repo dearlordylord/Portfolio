@@ -14,7 +14,7 @@ import { mediaDeliveryFromBlob, pendingMediaDelivery } from "../../src/motion/me
 
 function candidate(overrides: Partial<HevcGateInput> = {}): HevcGateInput {
   return {
-    sourceUrl: "/video-prototype/hero-hevc-alpha.mp4",
+    sourceUrl: "/video-prototype/hero-hevc-alpha.mov",
     assetId: "hero-hevc-alpha-v1",
     assetPresent: true,
     canPlayType: "probably",
@@ -28,6 +28,8 @@ function candidate(overrides: Partial<HevcGateInput> = {}): HevcGateInput {
 
 describe("HEVC-with-alpha candidate gate", () => {
   it("uses the documented MIME and accepts only an evidence-qualified candidate", () => {
+    expect(HEVC_ALPHA_MIME).toContain("video/quicktime");
+    expect(HEVC_ALPHA_MIME).not.toContain("video/mp4");
     expect(HEVC_ALPHA_MIME).toContain("hvc1");
     expect(evaluateHevcAlphaGate(candidate())).toMatchObject({
       status: "accepted",

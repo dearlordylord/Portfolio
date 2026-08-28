@@ -63,7 +63,7 @@ test("H does not request an imported candidate without a manual asset/device evi
     if (new URL(request.url()).pathname.includes("/hero-hevc-alpha")) requested = true;
   });
 
-  await page.goto("/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mp4&hevcAssetId=hero-hevc-alpha-v1");
+  await page.goto("/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mov&hevcAssetId=hero-hevc-alpha-v1");
   await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/);
   await expect.poll(() => requested).toBe(false);
 });
@@ -76,13 +76,13 @@ test("manually enabled H shows a frame-0 poster and falls back after stalled pre
       return nativeCanPlayType.call(this, type);
     };
   });
-  await page.route("**/hero-hevc-alpha.mp4", async (route) => {
+  await page.route("**/hero-hevc-alpha.mov", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, HEVC_PREPARATION_DEADLINE_MS + 500));
     await route.abort();
   });
 
   await page.goto(
-    "/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mp4&hevcAssetId=hero-hevc-alpha-v1&hevcQualified=asset:hero-hevc-alpha-v1%7Cdevice:macos-safari",
+    "/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mov&hevcAssetId=hero-hevc-alpha-v1&hevcQualified=asset:hero-hevc-alpha-v1%7Cdevice:macos-safari",
   );
   await expect(page.locator("#media-stage .hero-render-poster")).toBeVisible();
   await expect(page.locator("#media-stage canvas")).toHaveCount(0);

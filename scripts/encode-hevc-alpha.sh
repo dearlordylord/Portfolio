@@ -24,7 +24,7 @@ if [[ ! -f "$swift_encoder" ]]; then
 fi
 
 staging_dir="${HEVC_ALPHA_OUTPUT_DIR:-$project_root/motion-artifacts/hevc-alpha}"
-output_path="${HEVC_ALPHA_OUTPUT:-$staging_dir/hero-hevc-alpha.mp4}"
+output_path="${HEVC_ALPHA_OUTPUT:-$staging_dir/hero-hevc-alpha.mov}"
 
 # The Swift tool creates parent directories and enforces the tracked-output
 # guard. The default is already covered by the repository's motion-artifacts/
