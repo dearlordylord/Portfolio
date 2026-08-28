@@ -11,3 +11,4 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+public/video-prototype/hero-hevc-alpha.mov
