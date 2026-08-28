@@ -4,6 +4,10 @@ Last updated: 2026-08-27
 
 This is the canonical project note for motion work. Load this file before changing animation timing, responsive geometry, canvas behavior, or mobile input. Historical research was removed after its durable conclusions moved into the implementation and tests.
 
+## Active temporary research
+
+- [Transparent, scrub-driven hero media research](./transparent-video-hero-research.md) — current cross-browser alpha/video decision note. It preserves the correctness-first WebP sequence, direct-DOM Safari HEVC-with-alpha, Chromium VP9A, and a bounded packed-matte salvage experiment as separate options. Delete this note after the selected architecture and its real-device gates have moved into source/tests and the prototype branch has been promoted or rejected.
+
 ## Product contracts
 
 - **M1 — stable mobile hero:** capture one stable first-screen height; place the animation stage in its lower `38%–85%` region; recompute only for a real orientation or breakpoint change.
