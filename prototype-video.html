@@ -455,12 +455,25 @@
         <div class="metric-row"><dt>Resolution</dt><dd id="metric-resolution">—</dd></div>
         <div class="metric-row"><dt>Approx transferred</dt><dd id="metric-bytes">—</dd></div>
         <div class="metric-row"><dt>Frames loaded</dt><dd id="metric-frames">—</dd></div>
+        <div class="metric-row"><dt>Quality ladder</dt><dd id="metric-quality">—</dd></div>
         <div class="metric-row"><dt>Scrub-held frame</dt><dd id="metric-scrub">—</dd></div>
+        <div class="metric-row"><dt>Intended frame</dt><dd id="metric-intended">—</dd></div>
+        <div class="metric-row"><dt>Media currentTime</dt><dd id="metric-media-time">—</dd></div>
+        <div class="metric-row"><dt>Media frame</dt><dd id="metric-media-frame">—</dd></div>
+        <div class="metric-row"><dt>Confirmed presented</dt><dd id="metric-presented">—</dd></div>
+        <div class="metric-row"><dt>Confirmation source</dt><dd id="metric-confirmation">—</dd></div>
+        <div class="metric-row"><dt>Presented − intended</dt><dd id="metric-delta">—</dd></div>
+        <div class="metric-row"><dt>Expected motion</dt><dd id="metric-expected">—</dd></div>
+        <div class="metric-row"><dt>Actual playback</dt><dd id="metric-actual">—</dd></div>
+        <div class="metric-row"><dt>Playback reason</dt><dd id="metric-reason">—</dd></div>
+        <div class="metric-row"><dt>Last progress age</dt><dd id="metric-progress-age">—</dd></div>
         <div class="metric-row"><dt>Fallback reason</dt><dd id="metric-fallback">—</dd></div>
       </dl>
       <p class="events-title">Recent events</p>
       <ol class="events" id="metric-events"></ol>
-      <p class="metric-note">Scrubbing pauses on first input, holds the captured frame through release, and resumes only with Play. Bytes are encoded-asset estimates (headers/cache excluded). Try <code>forceFail=a</code>, <code>forceFail=b</code>, <code>forceFail=webgl</code>, or <code>forceFail=a,b</code> to exercise lazy fallback paths. VP9 alpha support is not guaranteed by canPlayType alone; validate on the target iOS release.</p>
+      <p class="events-title">Playback event tape</p>
+      <ol class="events" id="metric-tape"></ol>
+      <p class="metric-note">A scrub captures its latest input, seeks while paused, then resumes automatically only after the target frame is presented. Explicit Pause is the only user pause. Bytes are encoded-asset estimates (headers/cache excluded). Try <code>quality=hq</code>, <code>forceFail=a</code>, <code>forceFail=b</code>, <code>forceFail=webgl</code>, or <code>forceFail=a,b</code> to exercise lazy fallback paths. VP9 alpha support is not guaranteed by canPlayType alone; validate on the target iOS release.</p>
     </aside>
 
     <div class="scrub">

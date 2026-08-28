@@ -10,7 +10,17 @@
  * updates so a reviewer can see exactly where Safari behavior differs.
  */
 
-type Variant = "a" | "b" | "c";
+import {
+  createVideoPlaybackModel,
+  playbackHandoffFrame as modelPlaybackHandoffFrame,
+  shouldAutoplayHandoff,
+  type PlaybackEvent,
+  type PlaybackRenderer,
+  type VideoPlaybackModel,
+  type VideoPlaybackSnapshot,
+} from "../motion/video-playback-model";
+
+type Variant = PlaybackRenderer;
 
 type VariantDefinition = {
   key: Variant;
@@ -30,19 +40,29 @@ const FRAME_RATE = 15;
 const FRAME_DURATION_SECONDS = FRAME_COUNT / FRAME_RATE;
 const INTRO_END_FRAME = 31;
 const LAST_FRAME = FRAME_COUNT - 1;
+const LAST_FRAME_PTS_SECONDS = LAST_FRAME / FRAME_RATE;
 const WEBP_TOTAL_BYTES = 4_578_812;
 const WEBM_BYTES = 2_011_506;
 const MP4_BYTES = 1_706_162;
+const HQ_WEBM_BYTES = 0;
+const HQ_MP4_BYTES = 1_553_124;
 const SOURCE_WIDTH = 900;
 const SOURCE_HEIGHT = 507;
+const HQ_WIDTH = 1280;
+const HQ_HEIGHT = 720;
 const PACKED_WIDTH = 1800;
 const PACKED_HEIGHT = 508;
 const WEBP_PREFIX = "/Кадры/frame_";
 const WEBP_SUFFIX = "_delay-0.067s.webp";
 const WEBM_SOURCE = "/video-prototype/hero-alpha-vp9.webm";
 const MP4_SOURCE = "/video-prototype/hero-color-matte.mp4";
+const HQ_WEBM_SOURCE = "/video-prototype/hq-hero-alpha-vp9.webm";
+const HQ_MP4_SOURCE = "/video-prototype/hq-hero-color-matte.mp4";
 const prototypeParams = new URLSearchParams(window.location.search);
 const segmentedPlayback = prototypeParams.get("mode") !== "loop";
+const requestedQuality = prototypeParams.get("quality")?.toLowerCase() === "hq" ? "hq" : "standard";
+const activeQuality: "standard" | "hq" = requestedQuality === "hq" && HQ_MP4_BYTES > 0 ? "hq" : "standard";
+const nativeQuality: "standard" | "hq" = activeQuality === "hq" && HQ_WEBM_BYTES > 0 ? "hq" : "standard";
 
 // `forceFail` accepts repeated query parameters or a comma-separated list so
 // a reviewer can exercise one boundary (`forceFail=b`) or a full cascade
@@ -70,6 +90,7 @@ const scrub = requiredElement<HTMLInputElement>("timeline-scrub");
 const switcher = requiredElement<HTMLElement>("variant-switcher");
 const statusLabel = requiredElement<HTMLElement>("metrics-status");
 const metricEvents = requiredElement<HTMLOListElement>("metric-events");
+const metricTape = requiredElement<HTMLOListElement>("metric-tape");
 
 const metricElements = {
   requested: document.getElementById("metric-requested"),
@@ -90,6 +111,17 @@ const metricElements = {
   frames: document.getElementById("metric-frames"),
   scrub: document.getElementById("metric-scrub"),
   fallback: document.getElementById("metric-fallback"),
+  quality: document.getElementById("metric-quality"),
+  intended: document.getElementById("metric-intended"),
+  mediaTime: document.getElementById("metric-media-time"),
+  mediaFrame: document.getElementById("metric-media-frame"),
+  presented: document.getElementById("metric-presented"),
+  confirmation: document.getElementById("metric-confirmation"),
+  delta: document.getElementById("metric-delta"),
+  expected: document.getElementById("metric-expected"),
+  actual: document.getElementById("metric-actual"),
+  reason: document.getElementById("metric-reason"),
+  progressAge: document.getElementById("metric-progress-age"),
 } as const;
 
 type MetricElement = HTMLElement | null;
@@ -116,6 +148,8 @@ type Metrics = {
   fallbackReason: string;
   frame: number;
   events: string[];
+  quality: string;
+  playback: VideoPlaybackSnapshot | null;
 };
 
 type Runtime = {
@@ -124,7 +158,14 @@ type Runtime = {
   togglePlayback: () => void;
   pauseForScrub: () => void;
   resumeFromScrub: (frame: number) => void;
+  resumeAfterPresented: (frame: number) => void;
   seek: (frame: number) => void;
+};
+
+type PlaybackBinding = {
+  model: VideoPlaybackModel;
+  dispatch: (event: PlaybackEvent) => VideoPlaybackSnapshot;
+  snapshot: (atMs?: number) => VideoPlaybackSnapshot;
 };
 
 const bootStartedAt = performance.now();
@@ -135,6 +176,15 @@ let currentVariant: Variant = "a";
 let requestedVariant: Variant = "a";
 let scrubHeldFrame: number | null = null;
 let scrubPointerActive = false;
+let scrubCompletedFrameAwaitingChange: number | null = null;
+let playbackBinding: PlaybackBinding | null = null;
+
+// A paused seek may produce no further media event. Keep the diagnostic model
+// observable through its resume deadline without using the watchdog to drive
+// either renderer's playback.
+window.setInterval(() => {
+  playbackBinding?.snapshot(playbackTimeMs());
+}, 100);
 
 function createMetrics(requested: Variant): Metrics {
   return {
@@ -159,6 +209,8 @@ function createMetrics(requested: Variant): Metrics {
     fallbackReason: "none",
     frame: 0,
     events: [],
+    quality: activeQuality === "hq" ? "HQ packed B · A/C standard" : "standard ladder",
+    playback: null,
   };
 }
 
@@ -227,14 +279,45 @@ function setScrubHold(frame: number | null, state: string): void {
   renderMetrics();
 }
 
-function markScrubSeekComplete(): void {
-  if (scrubHeldFrame === null) return;
-  metrics.scrubState = "held · seek complete";
+function currentTime(): number {
+  return performance.now();
+}
+
+function playbackTimeMs(): number {
+  return Math.max(0, currentTime() - bootStartedAt);
+}
+
+function syncPlaybackSnapshot(snapshot: VideoPlaybackSnapshot): void {
+  metrics.playback = snapshot;
+  scrubHeldFrame = snapshot.scrubHeldFrame;
+  metrics.scrubHeldFrame = snapshot.scrubHeldFrame;
+  if (snapshot.seeking) metrics.scrubState = `seeking · target ${snapshot.scrubHeldFrame ?? snapshot.intendedFrame}`;
+  if (snapshot.reason === "scrub-confirmed-autoplay") metrics.scrubState = "auto-resumed";
   renderMetrics();
 }
 
-function currentTime(): number {
-  return performance.now();
+function createPlaybackBinding(renderer: Variant): PlaybackBinding {
+  const model = createVideoPlaybackModel({
+    renderer,
+    frameCount: FRAME_COUNT,
+    frameRate: FRAME_RATE,
+    resumeDeadlineMs: 500,
+    tapeLimit: 32,
+  });
+  const binding: PlaybackBinding = {
+    model,
+    dispatch: (event) => {
+      const snapshot = model.dispatch(event);
+      syncPlaybackSnapshot(snapshot);
+      return snapshot;
+    },
+    snapshot: (atMs = playbackTimeMs()) => {
+      const snapshot = model.snapshot(atMs);
+      syncPlaybackSnapshot(snapshot);
+      return snapshot;
+    },
+  };
+  return binding;
 }
 
 function recordEvent(message: string): void {
@@ -279,9 +362,36 @@ function renderMetrics(): void {
   writeMetric(metricElements.resolution, metrics.resolution);
   writeMetric(metricElements.bytes, formatBytes(metrics.transferredBytes));
   writeMetric(metricElements.frames, `${metrics.loadedFrames} / ${FRAME_COUNT}`);
+  writeMetric(metricElements.quality, metrics.quality);
   writeMetric(
     metricElements.scrub,
     metrics.scrubHeldFrame === null ? "none" : `frame ${metrics.scrubHeldFrame} · ${metrics.scrubState}`,
+  );
+  const playback = metrics.playback;
+  writeMetric(metricElements.intended, playback === null ? "pending" : `frame ${playback.intendedFrame}`);
+  writeMetric(
+    metricElements.mediaTime,
+    playback?.mediaCurrentTimeSeconds === null || playback?.mediaCurrentTimeSeconds === undefined
+      ? "pending"
+      : `${playback.mediaCurrentTimeSeconds.toFixed(3)} s`,
+  );
+  writeMetric(metricElements.mediaFrame, playback?.mediaFrame === null || playback?.mediaFrame === undefined ? "pending" : `frame ${playback.mediaFrame}`);
+  writeMetric(
+    metricElements.presented,
+    playback?.confirmedPresentedFrame === null || playback?.confirmedPresentedFrame === undefined
+      ? "pending"
+      : `frame ${playback.confirmedPresentedFrame}`,
+  );
+  writeMetric(metricElements.confirmation, playback?.confirmationSource ?? "pending");
+  writeMetric(metricElements.delta, playback?.deltaFrames === null || playback?.deltaFrames === undefined ? "pending" : `${playback.deltaFrames > 0 ? "+" : ""}${playback.deltaFrames} frames`);
+  writeMetric(metricElements.expected, playback === null ? "pending" : playback.expectedMotion ? "yes" : "no");
+  writeMetric(metricElements.actual, playback === null ? "pending" : playback.actualPlayback);
+  writeMetric(metricElements.reason, playback === null ? "pending" : playback.reason);
+  writeMetric(
+    metricElements.progressAge,
+    playback?.lastProgressAgeMs === null || playback?.lastProgressAgeMs === undefined
+      ? "pending"
+      : `${Math.round(playback.lastProgressAgeMs)} ms`,
   );
   writeMetric(metricElements.fallback, metrics.fallbackReason);
   statusLabel.textContent = metrics.state;
@@ -289,6 +399,17 @@ function renderMetrics(): void {
     ...metrics.events.map((entry) => {
       const item = document.createElement("li");
       item.textContent = entry;
+      return item;
+    }),
+  );
+  metricTape.replaceChildren(
+    ...(playback?.eventTape ?? []).map((entry) => {
+      const item = document.createElement("li");
+      const details = Object.entries(entry.details)
+        .filter(([, value]) => value !== null && value !== undefined)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(" ");
+      item.textContent = `${Math.round(entry.atMs)}ms · ${entry.event}${details ? ` · ${details}` : ""}`;
       return item;
     }),
   );
@@ -359,7 +480,18 @@ function setCopy(frame: number): void {
   renderMetrics();
 }
 
-function appendMediaEvents(video: HTMLVideoElement, isCurrent: () => boolean, onError: (reason: string) => void): () => void {
+type MediaEventCallbacks = {
+  onReady?: () => void;
+  onPlaying?: () => void;
+  onPaused?: () => void;
+};
+
+function appendMediaEvents(
+  video: HTMLVideoElement,
+  isCurrent: () => boolean,
+  onError: (reason: string) => void,
+  callbacks: MediaEventCallbacks = {},
+): () => void {
   const eventNames = ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing", "pause", "waiting", "stalled", "suspend", "emptied", "abort"] as const;
   const listeners = new Map<string, EventListener>();
   for (const name of eventNames) {
@@ -367,11 +499,16 @@ function appendMediaEvents(video: HTMLVideoElement, isCurrent: () => boolean, on
       if (!isCurrent()) return;
       metrics.state = name;
       if (name === "loadedmetadata" || name === "loadeddata" || name === "canplay") updateMediaMetrics(video, "video metadata pending");
-      if (name === "canplay") markReady();
+      if (name === "canplay") {
+        markReady();
+        callbacks.onReady?.();
+      }
       if (name === "loadeddata" || name === "playing") markFirstVisible();
       if (name === "playing") playToggle.classList.remove("visible");
       if (name === "pause" || name === "waiting") playToggle.classList.add("visible");
       if (name === "pause" && scrubHeldFrame !== null) metrics.state = `scrub held frame ${scrubHeldFrame}`;
+      if (name === "playing") callbacks.onPlaying?.();
+      if (name === "pause") callbacks.onPaused?.();
       recordEvent(`media:${name}`);
     };
     listeners.set(name, listener);
@@ -412,13 +549,19 @@ function setupVideoElement(source: string): HTMLVideoElement {
   return video;
 }
 
-function playVideo(video: HTMLVideoElement, isCurrent: () => boolean): void {
+function playVideo(
+  video: HTMLVideoElement,
+  isCurrent: () => boolean,
+  onAutoplayBlocked?: () => void,
+): void {
   void video.play().catch(() => {
     if (!isCurrent()) return;
     metrics.state = "autoplay blocked";
     addFallbackReason("autoplay blocked — tap Play");
     playToggle.classList.add("visible");
+    playbackBinding?.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "autoplay-blocked" });
     recordEvent("play() rejected; waiting for user gesture");
+    onAutoplayBlocked?.();
   });
 }
 
@@ -436,34 +579,69 @@ function setupNativeVp9(run: number): Runtime | null {
     return null;
   }
 
-  const video = setupVideoElement(WEBM_SOURCE);
+  const video = setupVideoElement(nativeQuality === "hq" ? HQ_WEBM_SOURCE : WEBM_SOURCE);
   video.classList.remove("hero-render-source");
   video.loop = !segmentedPlayback;
   metrics.active = "a";
-  metrics.alpha = "encoded VP9 alpha (alpha_mode=1; browser render unverified)";
-  metrics.state = "loading WebM";
-  metrics.transferredBytes = resourceBytes(WEBM_SOURCE, WEBM_BYTES);
+  metrics.alpha = `encoded VP9 alpha (${nativeQuality}; alpha_mode=1; browser render unverified)`;
+  metrics.state = `loading ${nativeQuality === "hq" ? "HQ " : ""}WebM`;
+  metrics.transferredBytes = resourceBytes(nativeQuality === "hq" ? HQ_WEBM_SOURCE : WEBM_SOURCE, nativeQuality === "hq" ? HQ_WEBM_BYTES : WEBM_BYTES);
   renderMetrics();
   const isCurrent = () => runId === run && runtime?.variant === "a";
+  const binding = playbackBinding ?? createPlaybackBinding("a");
+  playbackBinding = binding;
+  const handoff = binding.snapshot();
+  const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
+  const shouldResumeHandoff = shouldAutoplayHandoff(handoff);
+  let readyDispatched = false;
+  const applyHandoff = (): void => {
+    if (!handoff.eventTape.some((entry) => entry.event === "media-ready") || handoffFrame <= 0) return;
+    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+    video.currentTime = handoffFrame / FRAME_RATE;
+    if (shouldResumeHandoff) playVideo(video, isCurrent);
+    else video.pause();
+  };
+  const onReady = (): void => {
+    if (readyDispatched) return;
+    readyDispatched = true;
+    dispatchMediaReady(binding, video, isCurrent);
+    applyHandoff();
+  };
   const removeMediaListeners = appendMediaEvents(video, isCurrent, (reason) => {
     if (isCurrent()) {
       addFallbackReason(`A media error: ${reason}`);
       fallbackFrom("a", `A media error: ${reason}`);
     }
+  }, {
+    onReady,
+    onPlaying: () => binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() }),
+    onPaused: () => {
+      const state = binding.snapshot();
+      if (state.reason !== "user-pause" && !state.seeking) {
+        binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "media-paused" });
+      }
+    },
   });
-  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = segmentedPlayback ? "intro" : "loop";
+  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = !segmentedPlayback
+    ? "loop"
+    : handoffFrame >= LAST_FRAME
+      ? "terminal"
+      : handoffFrame >= INTRO_END_FRAME
+        ? "main"
+        : "intro";
   const timeListener = (): void => {
     if (!isCurrent()) return;
-    const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
-    const frame = (video.currentTime / duration) * LAST_FRAME;
+    const frame = video.currentTime * FRAME_RATE;
+    binding.dispatch({ type: "media-timeupdate", atMs: playbackTimeMs(), currentTimeSeconds: video.currentTime });
     setCopy(frame);
     if (!segmentedPlayback) return;
-    const introTime = (INTRO_END_FRAME / LAST_FRAME) * duration;
-    const terminalTime = Math.max(0, duration - 1 / FRAME_RATE);
+    const introTime = INTRO_END_FRAME / FRAME_RATE;
+    const terminalTime = LAST_FRAME_PTS_SECONDS;
     if (segmentPhase === "intro" && video.currentTime >= introTime) {
       segmentPhase = "waiting";
       video.pause();
       video.currentTime = introTime;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
       metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
       playToggle.textContent = "Resume main segment";
       playToggle.classList.add("visible");
@@ -472,6 +650,7 @@ function setupNativeVp9(run: number): Runtime | null {
       segmentPhase = "terminal";
       video.pause();
       video.currentTime = terminalTime;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-terminal-pause" });
       metrics.segment = `exact terminal pause · frame ${LAST_FRAME}`;
       playToggle.textContent = "Replay intro segment";
       playToggle.classList.add("visible");
@@ -483,7 +662,6 @@ function setupNativeVp9(run: number): Runtime | null {
     if (!isCurrent() || seekStartedAt === null) return;
     metrics.seekMs = currentTime() - seekStartedAt;
     seekStartedAt = null;
-    markScrubSeekComplete();
     recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
   };
   video.addEventListener("seeked", seekListener);
@@ -491,15 +669,15 @@ function setupNativeVp9(run: number): Runtime | null {
   const pauseForScrub = (): void => {
     if (!isCurrent()) return;
     video.pause();
+    binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "scrub-pause" });
     metrics.state = `scrub held frame ${Math.round(metrics.frame)}`;
-    playToggle.textContent = "Play from held frame";
+    playToggle.textContent = "Play if seek stalls";
     playToggle.classList.add("visible");
     recordEvent(`scrub paused at frame ${Math.round(metrics.frame)}`);
   };
   const resumeFromScrub = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
-    const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
     video.loop = !segmentedPlayback;
     if (segmentedPlayback) {
       if (target >= LAST_FRAME) {
@@ -508,33 +686,53 @@ function setupNativeVp9(run: number): Runtime | null {
         metrics.segment = `intro segment running · scrub released from frame ${target}`;
       } else if (target < INTRO_END_FRAME) {
         segmentPhase = "intro";
-        video.currentTime = (target / LAST_FRAME) * duration;
+        video.currentTime = target / FRAME_RATE;
         metrics.segment = `intro segment running · pause @ frame ${INTRO_END_FRAME}`;
       } else {
         segmentPhase = "main";
-        video.currentTime = (target / LAST_FRAME) * duration;
+        video.currentTime = target / FRAME_RATE;
         metrics.segment = `main segment running · terminal pause @ frame ${LAST_FRAME}`;
       }
     } else {
-      video.currentTime = (target / LAST_FRAME) * duration;
+      video.currentTime = target / FRAME_RATE;
     }
     metrics.state = `playing from scrub frame ${target}`;
     playToggle.classList.remove("visible");
     recordEvent(`scrub released by Play at frame ${target}`);
     playVideo(video, isCurrent);
   };
+  const resumeAfterPresented = (frame: number): void => {
+    if (!isCurrent()) return;
+    const target = normalizeFrame(frame);
+    video.loop = !segmentedPlayback;
+    if (segmentedPlayback) {
+      if (target >= LAST_FRAME) {
+        segmentPhase = "terminal";
+        metrics.segment = `terminal frame confirmed · pause @ frame ${LAST_FRAME}`;
+        return;
+      }
+      segmentPhase = target < INTRO_END_FRAME ? "intro" : "main";
+      metrics.segment = segmentPhase === "intro"
+        ? `intro segment running · pause @ frame ${INTRO_END_FRAME}`
+        : `main segment running · terminal pause @ frame ${LAST_FRAME}`;
+    }
+    playVideo(video, isCurrent);
+  };
+  const stopPresentation = observeNativePresentation(video, isCurrent, binding, resumeAfterPresented);
   playToggle.classList.remove("visible");
-  playVideo(video, isCurrent);
+  applyHandoff();
+  if (shouldResumeHandoff) playVideo(video, isCurrent);
+  else video.pause();
   return {
     variant: "a",
     pauseForScrub,
     resumeFromScrub,
+    resumeAfterPresented,
     togglePlayback: () => {
       if (segmentedPlayback && segmentPhase === "waiting") {
         segmentPhase = "main";
         video.loop = false;
-        const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
-        video.currentTime = (INTRO_END_FRAME / LAST_FRAME) * duration;
+        video.currentTime = INTRO_END_FRAME / FRAME_RATE;
         metrics.segment = `main segment running · terminal pause @ frame ${LAST_FRAME}`;
         playToggle.classList.remove("visible");
         playVideo(video, isCurrent);
@@ -562,11 +760,12 @@ function setupNativeVp9(run: number): Runtime | null {
         metrics.segment = `manual seek · scrub hold frame ${target}`;
       }
       seekStartedAt = currentTime();
-      video.currentTime = (target / LAST_FRAME) * video.duration;
+      video.currentTime = target / FRAME_RATE;
       recordEvent(`seek requested frame ${target}`);
     },
     destroy: () => {
       removeMediaListeners();
+      stopPresentation();
       video.removeEventListener("timeupdate", timeListener);
       video.removeEventListener("seeked", seekListener);
       video.pause();
@@ -582,7 +781,134 @@ type FrameVideo = HTMLVideoElement & {
   cancelVideoFrameCallback?: (handle: number) => void;
 };
 
-function createPackedWebGl(video: HTMLVideoElement, canvas: HTMLCanvasElement): (() => void) | null {
+type PresentationSource = "rvfc" | "timeupdate-estimate" | "raf-estimate" | "seeked-estimate" | "webgl-draw" | "webgl-raf-estimate" | "sequence-draw";
+
+function frameFromVideoTime(video: HTMLVideoElement, mediaTime = video.currentTime): number {
+  void video;
+  return normalizeFrame(mediaTime * FRAME_RATE);
+}
+
+function dispatchMediaReady(binding: PlaybackBinding, video: HTMLVideoElement, isCurrent: () => boolean): void {
+  if (!isCurrent() || playbackBinding !== binding) return;
+  if (binding.snapshot().eventTape.some((entry) => entry.event === "media-ready")) return;
+  binding.dispatch({
+    type: "media-ready",
+    atMs: playbackTimeMs(),
+    durationSeconds: Number.isFinite(video.duration) && video.duration > 0 ? video.duration : FRAME_DURATION_SECONDS,
+    currentTimeSeconds: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+  });
+}
+
+function completeScrubAfterPresented(frame: number, capturedTarget: number | null): void {
+  if (capturedTarget === null || normalizeFrame(frame) !== normalizeFrame(capturedTarget)) return;
+  scrubCompletedFrameAwaitingChange = normalizeFrame(capturedTarget);
+  scrubHeldFrame = null;
+  metrics.scrubHeldFrame = null;
+  metrics.scrubState = "auto-resumed";
+  metrics.state = `playing from scrub frame ${normalizeFrame(capturedTarget)}`;
+  scrub.value = String(normalizeFrame(capturedTarget));
+  playToggle.textContent = "Pause animation";
+  playToggle.classList.remove("visible");
+  renderMetrics();
+  recordEvent(`scrub presented frame ${normalizeFrame(capturedTarget)}; autoplay resumed`);
+}
+
+function dispatchPresentedFrame(
+  binding: PlaybackBinding,
+  isCurrent: () => boolean,
+  video: HTMLVideoElement,
+  mediaTime: number,
+  resumeAfterPresented: (frame: number) => void,
+  source: PresentationSource,
+): void {
+  if (!isCurrent() || playbackBinding !== binding || !Number.isFinite(mediaTime)) return;
+  const before = binding.snapshot();
+  // A paused frame is useful confirmation only while a scrub seek is pending.
+  // This prevents a segment boundary or autoplay rejection from looking like
+  // forward progress in the public gauges.
+  if (video.paused && !before.seeking) return;
+  const frame = frameFromVideoTime(video, mediaTime);
+  const state = binding.dispatch({
+    type: "media-presented",
+    atMs: playbackTimeMs(),
+    frame,
+    currentTimeSeconds: mediaTime,
+    source,
+  });
+  setCopy(frame);
+  if (before.seeking && state.reason === "scrub-confirmed-autoplay") {
+    completeScrubAfterPresented(frame, before.scrubHeldFrame);
+    resumeAfterPresented(frame);
+  }
+}
+
+/**
+ * Prefer requestVideoFrameCallback, then use RAF plus timeupdate/seeked for
+ * browsers without it. The callback reports a presented media frame, not a
+ * requested currentTime, which is the distinction Safari needs for scrub
+ * recovery.
+ */
+function observeNativePresentation(
+  video: HTMLVideoElement,
+  isCurrent: () => boolean,
+  binding: PlaybackBinding,
+  resumeAfterPresented: (frame: number) => void,
+): () => void {
+  const frameVideo = video as FrameVideo;
+  const hasVideoFrameCallback = typeof frameVideo.requestVideoFrameCallback === "function";
+  let stopped = false;
+  let rafHandle: number | null = null;
+  let videoFrameHandle: number | null = null;
+  const emit = (mediaTime = video.currentTime, source: PresentationSource = "timeupdate-estimate"): void => {
+    if (!stopped) dispatchPresentedFrame(binding, isCurrent, video, mediaTime, resumeAfterPresented, source);
+  };
+  const scheduleVideoFrame = (): void => {
+    if (stopped || !hasVideoFrameCallback) return;
+    // Keep exactly one rVFC outstanding. A seek can emit multiple `seeked`
+    // notifications while the prior callback is still pending; queuing one
+    // per notification would multiply the presentation loop on Safari.
+    if (videoFrameHandle !== null) return;
+    videoFrameHandle = frameVideo.requestVideoFrameCallback?.((_now, metadata) => {
+      videoFrameHandle = null;
+      emit(metadata.mediaTime, "rvfc");
+      scheduleVideoFrame();
+    }) ?? null;
+  };
+  const onTimeUpdate = (): void => {
+    if (!hasVideoFrameCallback) emit(video.currentTime, "timeupdate-estimate");
+  };
+  const onSeeked = (): void => {
+    // With rVFC, `seeked` reports a requested timeline position, not a
+    // presented frame. Let only the pending rVFC confirm convergence; use the
+    // seeked estimate solely on browsers without rVFC.
+    if (hasVideoFrameCallback) scheduleVideoFrame();
+    else emit(video.currentTime, "seeked-estimate");
+  };
+  const tick = (): void => {
+    if (stopped) return;
+    if (!hasVideoFrameCallback && !video.paused) emit(video.currentTime, "raf-estimate");
+    rafHandle = requestAnimationFrame(tick);
+  };
+  video.addEventListener("timeupdate", onTimeUpdate);
+  video.addEventListener("seeked", onSeeked);
+  if (hasVideoFrameCallback) scheduleVideoFrame();
+  else rafHandle = requestAnimationFrame(tick);
+  return () => {
+    stopped = true;
+    video.removeEventListener("timeupdate", onTimeUpdate);
+    video.removeEventListener("seeked", onSeeked);
+    if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+    if (videoFrameHandle !== null && typeof frameVideo.cancelVideoFrameCallback === "function") {
+      frameVideo.cancelVideoFrameCallback(videoFrameHandle);
+    }
+  };
+}
+
+function createPackedWebGl(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  onPresented?: (mediaTime: number, source: PresentationSource) => void,
+): (() => void) | null {
   const gl = canvas.getContext("webgl", {
     alpha: true,
     premultipliedAlpha: false,
@@ -662,7 +988,7 @@ function createPackedWebGl(video: HTMLVideoElement, canvas: HTMLCanvasElement): 
   let rafHandle: number | null = null;
   let videoFrameHandle: number | null = null;
   const frameVideo = video as FrameVideo;
-  const draw = (mediaTime?: number): void => {
+  const draw = (mediaTime?: number, source: PresentationSource = "webgl-draw"): void => {
     if (stopped || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     const width = video.videoWidth || PACKED_WIDTH;
     const height = video.videoHeight || PACKED_HEIGHT;
@@ -681,26 +1007,29 @@ function createPackedWebGl(video: HTMLVideoElement, canvas: HTMLCanvasElement): 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     markFirstVisible();
     const time = mediaTime ?? video.currentTime;
-    setCopy((time / Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001)) * LAST_FRAME);
+    setCopy(time * FRAME_RATE);
+    onPresented?.(time, source);
   };
   const schedule = (): void => {
     if (stopped) return;
     if (typeof frameVideo.requestVideoFrameCallback === "function") {
+      // Do not fan out callbacks when loadeddata/playing/seek events overlap.
+      if (videoFrameHandle !== null) return;
       videoFrameHandle = frameVideo.requestVideoFrameCallback((_now, metadata) => {
         videoFrameHandle = null;
-        draw(metadata.mediaTime);
+        draw(metadata.mediaTime, "rvfc");
         schedule();
       });
     } else {
       rafHandle = requestAnimationFrame(() => {
         rafHandle = null;
-        draw();
+        draw(undefined, "webgl-raf-estimate");
         schedule();
       });
     }
   };
   const onVideoFrame = (): void => {
-    draw();
+    draw(undefined, "webgl-draw");
     schedule();
   };
   video.addEventListener("playing", onVideoFrame);
@@ -735,13 +1064,24 @@ function setupPackedH264(run: number): Runtime | null {
     return null;
   }
 
-  const video = setupVideoElement(MP4_SOURCE);
+  const video = setupVideoElement(activeQuality === "hq" ? HQ_MP4_SOURCE : MP4_SOURCE);
   video.loop = !segmentedPlayback;
   const canvas = document.createElement("canvas");
   canvas.className = "hero-render hero-render-canvas";
   canvas.setAttribute("aria-hidden", "true");
   mediaStage.append(canvas);
-  const stopWebGl = shouldForceFailure("webgl") ? null : createPackedWebGl(video, canvas);
+  const isCurrent = () => runId === run && runtime?.variant === "b";
+  const binding = playbackBinding ?? createPlaybackBinding("b");
+  playbackBinding = binding;
+  const handoff = binding.snapshot();
+  const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
+  const shouldResumeHandoff = shouldAutoplayHandoff(handoff);
+  let resumeAfterPresented: (frame: number) => void = () => undefined;
+  const stopWebGl = shouldForceFailure("webgl")
+    ? null
+    : createPackedWebGl(video, canvas, (mediaTime, source) => {
+      dispatchPresentedFrame(binding, isCurrent, video, mediaTime, resumeAfterPresented, source);
+    });
   if (!stopWebGl) {
     if (shouldForceFailure("webgl")) injectFailure("webgl");
     else addFallbackReason("B unavailable: WebGL context/shader failed");
@@ -753,17 +1093,41 @@ function setupPackedH264(run: number): Runtime | null {
   }
 
   metrics.active = "b";
-  metrics.alpha = "WebGL samples packed matte → output alpha";
-  metrics.state = "loading H.264 + WebGL";
-  metrics.transferredBytes = resourceBytes(MP4_SOURCE, MP4_BYTES);
-  metrics.resolution = `${PACKED_WIDTH}×${PACKED_HEIGHT} packed → ${SOURCE_WIDTH}×${PACKED_HEIGHT} output`;
+  metrics.alpha = `WebGL samples packed matte → output alpha (${activeQuality})`;
+  metrics.state = `loading ${activeQuality === "hq" ? "HQ " : ""}H.264 + WebGL`;
+  metrics.transferredBytes = resourceBytes(activeQuality === "hq" ? HQ_MP4_SOURCE : MP4_SOURCE, activeQuality === "hq" ? HQ_MP4_BYTES : MP4_BYTES);
+  metrics.resolution = activeQuality === "hq"
+    ? `${HQ_WIDTH * 2}×${HQ_HEIGHT} packed → ${HQ_WIDTH}×${HQ_HEIGHT} output`
+    : `${PACKED_WIDTH}×${PACKED_HEIGHT} packed → ${SOURCE_WIDTH}×${PACKED_HEIGHT} output`;
   renderMetrics();
-  const isCurrent = () => runId === run && runtime?.variant === "b";
+  let readyDispatched = false;
+  const applyHandoff = (): void => {
+    if (!handoff.eventTape.some((entry) => entry.event === "media-ready") || handoffFrame <= 0) return;
+    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+    video.currentTime = handoffFrame / FRAME_RATE;
+    if (shouldResumeHandoff) playVideo(video, isCurrent);
+    else video.pause();
+  };
+  const onReady = (): void => {
+    if (readyDispatched) return;
+    readyDispatched = true;
+    dispatchMediaReady(binding, video, isCurrent);
+    applyHandoff();
+  };
   const removeMediaListeners = appendMediaEvents(video, isCurrent, (reason) => {
     if (isCurrent()) {
       addFallbackReason(`B media error: ${reason}`);
       fallbackFrom("b", `B media error: ${reason}`);
     }
+  }, {
+    onReady,
+    onPlaying: () => binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() }),
+    onPaused: () => {
+      const state = binding.snapshot();
+      if (state.reason !== "user-pause" && !state.seeking) {
+        binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "media-paused" });
+      }
+    },
   });
   const contextLostListener = (contextEvent: Event): void => {
     contextEvent.preventDefault();
@@ -774,19 +1138,26 @@ function setupPackedH264(run: number): Runtime | null {
     fallbackFrom("b", "B WebGL context lost");
   };
   canvas.addEventListener("webglcontextlost", contextLostListener);
-  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = segmentedPlayback ? "intro" : "loop";
+  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = !segmentedPlayback
+    ? "loop"
+    : handoffFrame >= LAST_FRAME
+      ? "terminal"
+      : handoffFrame >= INTRO_END_FRAME
+        ? "main"
+        : "intro";
   const timeListener = (): void => {
     if (!isCurrent()) return;
-    const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
-    const frame = (video.currentTime / duration) * LAST_FRAME;
+    const frame = video.currentTime * FRAME_RATE;
+    binding.dispatch({ type: "media-timeupdate", atMs: playbackTimeMs(), currentTimeSeconds: video.currentTime });
     setCopy(frame);
     if (!segmentedPlayback) return;
-    const introTime = (INTRO_END_FRAME / LAST_FRAME) * duration;
-    const terminalTime = Math.max(0, duration - 1 / FRAME_RATE);
+    const introTime = INTRO_END_FRAME / FRAME_RATE;
+    const terminalTime = LAST_FRAME_PTS_SECONDS;
     if (segmentPhase === "intro" && video.currentTime >= introTime) {
       segmentPhase = "waiting";
       video.pause();
       video.currentTime = introTime;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
       metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
       playToggle.textContent = "Resume main segment";
       playToggle.classList.add("visible");
@@ -795,6 +1166,7 @@ function setupPackedH264(run: number): Runtime | null {
       segmentPhase = "terminal";
       video.pause();
       video.currentTime = terminalTime;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-terminal-pause" });
       metrics.segment = `exact terminal pause · frame ${LAST_FRAME}`;
       playToggle.textContent = "Replay intro segment";
       playToggle.classList.add("visible");
@@ -807,22 +1179,21 @@ function setupPackedH264(run: number): Runtime | null {
     if (!isCurrent() || seekStartedAt === null) return;
     metrics.seekMs = currentTime() - seekStartedAt;
     seekStartedAt = null;
-    markScrubSeekComplete();
     recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
   };
   video.addEventListener("seeked", seekListener);
   const pauseForScrub = (): void => {
     if (!isCurrent()) return;
     video.pause();
+    binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "scrub-pause" });
     metrics.state = `scrub held frame ${Math.round(metrics.frame)}`;
-    playToggle.textContent = "Play from held frame";
+    playToggle.textContent = "Play if seek stalls";
     playToggle.classList.add("visible");
     recordEvent(`scrub paused at frame ${Math.round(metrics.frame)}`);
   };
   const resumeFromScrub = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
-    const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
     video.loop = !segmentedPlayback;
     if (segmentedPlayback) {
       if (target >= LAST_FRAME) {
@@ -831,33 +1202,52 @@ function setupPackedH264(run: number): Runtime | null {
         metrics.segment = `intro segment running · scrub released from frame ${target}`;
       } else if (target < INTRO_END_FRAME) {
         segmentPhase = "intro";
-        video.currentTime = (target / LAST_FRAME) * duration;
+        video.currentTime = target / FRAME_RATE;
         metrics.segment = `intro segment running · pause @ frame ${INTRO_END_FRAME}`;
       } else {
         segmentPhase = "main";
-        video.currentTime = (target / LAST_FRAME) * duration;
+        video.currentTime = target / FRAME_RATE;
         metrics.segment = `main segment running · terminal pause @ frame ${LAST_FRAME}`;
       }
     } else {
-      video.currentTime = (target / LAST_FRAME) * duration;
+      video.currentTime = target / FRAME_RATE;
     }
     metrics.state = `playing from scrub frame ${target}`;
     playToggle.classList.remove("visible");
     recordEvent(`scrub released by Play at frame ${target}`);
     playVideo(video, isCurrent);
   };
+  resumeAfterPresented = (frame: number): void => {
+    if (!isCurrent()) return;
+    const target = normalizeFrame(frame);
+    video.loop = !segmentedPlayback;
+    if (segmentedPlayback) {
+      if (target >= LAST_FRAME) {
+        segmentPhase = "terminal";
+        metrics.segment = `terminal frame confirmed · pause @ frame ${LAST_FRAME}`;
+        return;
+      }
+      segmentPhase = target < INTRO_END_FRAME ? "intro" : "main";
+      metrics.segment = segmentPhase === "intro"
+        ? `intro segment running · pause @ frame ${INTRO_END_FRAME}`
+        : `main segment running · terminal pause @ frame ${LAST_FRAME}`;
+    }
+    playVideo(video, isCurrent);
+  };
   playToggle.classList.remove("visible");
-  playVideo(video, isCurrent);
+  applyHandoff();
+  if (shouldResumeHandoff) playVideo(video, isCurrent);
+  else video.pause();
   return {
     variant: "b",
     pauseForScrub,
     resumeFromScrub,
+    resumeAfterPresented,
     togglePlayback: () => {
       if (segmentedPlayback && segmentPhase === "waiting") {
         segmentPhase = "main";
         video.loop = false;
-        const duration = Math.max(video.duration || FRAME_DURATION_SECONDS, 0.001);
-        video.currentTime = (INTRO_END_FRAME / LAST_FRAME) * duration;
+        video.currentTime = INTRO_END_FRAME / FRAME_RATE;
         metrics.segment = `main segment running · terminal pause @ frame ${LAST_FRAME}`;
         playToggle.classList.remove("visible");
         playVideo(video, isCurrent);
@@ -885,7 +1275,7 @@ function setupPackedH264(run: number): Runtime | null {
         metrics.segment = `manual seek · scrub hold frame ${target}`;
       }
       seekStartedAt = currentTime();
-      video.currentTime = (target / LAST_FRAME) * video.duration;
+      video.currentTime = target / FRAME_RATE;
       recordEvent(`seek requested frame ${target}`);
     },
     destroy: () => {
@@ -914,9 +1304,14 @@ function setupWebpSequence(run: number): Runtime {
   canvas.setAttribute("aria-hidden", "true");
   mediaStage.replaceChildren(canvas);
   const context = canvas.getContext("2d", { alpha: true });
+  const binding = playbackBinding ?? createPlaybackBinding("c");
+  playbackBinding = binding;
+  const handoff = binding.snapshot();
+  const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
+  const hasReady = handoff.eventTape.some((entry) => entry.event === "media-ready");
   metrics.active = "c";
-  metrics.alpha = "source WebP RGBA → 2D canvas alpha";
-  metrics.state = "loading WebP sequence";
+  metrics.alpha = "source WebP RGBA → 2D canvas alpha (standard fallback)";
+  metrics.state = "loading WebP sequence (standard fallback)";
   metrics.durationSeconds = FRAME_DURATION_SECONDS;
   metrics.resolution = `${SOURCE_WIDTH}×${SOURCE_HEIGHT}`;
   metrics.transferredBytes = 0;
@@ -930,6 +1325,7 @@ function setupWebpSequence(run: number): Runtime {
       variant: "c",
       pauseForScrub: () => undefined,
       resumeFromScrub: () => undefined,
+      resumeAfterPresented: () => undefined,
       togglePlayback: () => undefined,
       seek: () => undefined,
       destroy: () => undefined,
@@ -940,32 +1336,60 @@ function setupWebpSequence(run: number): Runtime {
   const images: Array<HTMLImageElement | null> = Array.from({ length: FRAME_COUNT }, () => null);
   const loaded = new Set<number>();
   const failed = new Set<number>();
-  const queue: number[] = [0];
-  for (let frame = 1; frame < FRAME_COUNT; frame += 1) queue.push(frame);
+  const queue: number[] = hasReady && handoffFrame > 0 ? [handoffFrame] : [0];
+  for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
+    if (!queue.includes(frame)) queue.push(frame);
+  }
   const inFlight = new Set<number>();
   let stopped = false;
   let loadPumpHandle: number | null = null;
   let animationHandle: number | null = null;
-  let playing = true;
-  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = segmentedPlayback ? "intro" : "loop";
-  let startedAt = currentTime();
-  let currentFrame = 0;
+  let playing = shouldAutoplayHandoff(handoff);
+  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = !segmentedPlayback
+    ? "loop"
+    : handoffFrame >= LAST_FRAME
+      ? "terminal"
+      : handoffFrame >= INTRO_END_FRAME
+        ? "main"
+        : "intro";
+  let startedAt: number | null = null;
+  let currentFrame = handoffFrame;
   let pendingSeek: { frame: number; startedAt: number } | null = null;
+  let resumeAfterPresented: (frame: number) => void = () => undefined;
 
   const draw = (frame: number): void => {
     if (!isCurrent() || stopped) return;
     const exact = images[frame];
     const fallback = exact ?? images.slice(0, frame + 1).reverse().find((image) => image !== null) ?? images.find((image) => image !== null);
     if (!fallback) return;
-    context.clearRect(0, 0, SOURCE_WIDTH, SOURCE_HEIGHT);
-    context.drawImage(fallback, 0, 0, SOURCE_WIDTH, SOURCE_HEIGHT);
+    const width = SOURCE_WIDTH;
+    const height = SOURCE_HEIGHT;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(fallback, 0, 0, width, height);
     markFirstVisible();
     currentFrame = frame;
+    // Do not let a fallback copy of an as-yet-unloaded frame advance the
+    // sequence clock. The first exact drawable frame establishes the clock;
+    // on a renderer handoff that exact frame is the handed-off target.
+    if (startedAt === null && exact) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
+    const before = binding.snapshot();
+    if (exact && (playing || before.seeking)) {
+      const state = binding.dispatch({
+        type: "media-presented",
+        atMs: playbackTimeMs(),
+        frame,
+        currentTimeSeconds: frame / FRAME_RATE,
+        source: "sequence-draw",
+      });
+      if (before.seeking && state.reason === "scrub-confirmed-autoplay") {
+        completeScrubAfterPresented(frame, before.scrubHeldFrame);
+        resumeAfterPresented(frame);
+      }
+    }
     setCopy(frame);
     if (pendingSeek && pendingSeek.frame === frame && exact) {
       metrics.seekMs = currentTime() - pendingSeek.startedAt;
       pendingSeek = null;
-      markScrubSeekComplete();
       recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
     }
   };
@@ -983,12 +1407,20 @@ function setupWebpSequence(run: number): Runtime {
       metrics.loadedFrames = loaded.size;
       // The approximation scales the committed total by completed frame count;
       // it remains useful when browser resource timings report cache hits as 0.
-      metrics.transferredBytes = Math.round((loaded.size / FRAME_COUNT) * WEBP_TOTAL_BYTES);
-      if (frame === 0) {
+      const sequenceBytes = WEBP_TOTAL_BYTES;
+      metrics.transferredBytes = Math.round((loaded.size / FRAME_COUNT) * sequenceBytes);
+      if (frame === 0 && !hasReady) {
         markReady();
-        metrics.state = "ready / playing WebP";
+        binding.dispatch({
+          type: "media-ready",
+          atMs: playbackTimeMs(),
+          durationSeconds: FRAME_DURATION_SECONDS,
+          currentTimeSeconds: 0,
+        });
+        metrics.state = "ready / playing WebP sequence";
         draw(0);
       }
+      if (hasReady && frame === handoffFrame && handoffFrame > 0) draw(frame);
       if (pendingSeek?.frame === frame) draw(frame);
       renderMetrics();
       pump();
@@ -1017,6 +1449,10 @@ function setupWebpSequence(run: number): Runtime {
   const tick = (now: number): void => {
     if (stopped || !isCurrent()) return;
     if (playing) {
+      if (startedAt === null) {
+        animationHandle = requestAnimationFrame(tick);
+        return;
+      }
       const elapsed = (now - startedAt) / 1000;
       const frame = segmentedPlayback
         ? Math.min(LAST_FRAME, Math.floor(elapsed * FRAME_RATE))
@@ -1025,9 +1461,10 @@ function setupWebpSequence(run: number): Runtime {
       if (segmentedPlayback && segmentPhase === "intro" && frame >= INTRO_END_FRAME) {
         draw(INTRO_END_FRAME);
         playing = false;
-        segmentPhase = "waiting";
-        metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
-        playToggle.textContent = "Resume main segment";
+      segmentPhase = "waiting";
+      metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
+      playToggle.textContent = "Resume main segment";
         playToggle.classList.add("visible");
         recordEvent(`segment pause @ frame ${INTRO_END_FRAME}`);
       } else if (segmentedPlayback && segmentPhase === "main" && frame >= LAST_FRAME) {
@@ -1035,6 +1472,7 @@ function setupWebpSequence(run: number): Runtime {
         playing = false;
         segmentPhase = "terminal";
         metrics.segment = `exact terminal pause · frame ${LAST_FRAME}`;
+        binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-terminal-pause" });
         playToggle.textContent = "Replay intro segment";
         playToggle.classList.add("visible");
         recordEvent(`terminal pause @ frame ${LAST_FRAME}`);
@@ -1082,8 +1520,9 @@ function setupWebpSequence(run: number): Runtime {
   const pauseForScrub = (): void => {
     if (!isCurrent()) return;
     playing = false;
+    binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "scrub-pause" });
     metrics.state = `scrub held frame ${Math.round(metrics.frame)}`;
-    playToggle.textContent = "Play from held frame";
+    playToggle.textContent = "Play if seek stalls";
     playToggle.classList.add("visible");
     recordEvent(`scrub paused at frame ${Math.round(metrics.frame)}`);
   };
@@ -1114,6 +1553,26 @@ function setupWebpSequence(run: number): Runtime {
     recordEvent(`scrub released by Play at frame ${target}`);
     startAnimation();
   };
+  resumeAfterPresented = (frame: number): void => {
+    if (!isCurrent()) return;
+    const target = normalizeFrame(frame);
+    if (segmentedPlayback) {
+      if (target >= LAST_FRAME) {
+        segmentPhase = "terminal";
+        playing = false;
+        metrics.segment = `terminal frame confirmed · pause @ frame ${LAST_FRAME}`;
+        return;
+      }
+      segmentPhase = target < INTRO_END_FRAME ? "intro" : "main";
+      metrics.segment = segmentPhase === "intro"
+        ? `intro segment running · pause @ frame ${INTRO_END_FRAME}`
+        : `main segment running · terminal pause @ frame ${LAST_FRAME}`;
+    }
+    currentFrame = target;
+    startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+    playing = true;
+    startAnimation();
+  };
   const seek = (frame: number): void => {
     const target = Math.max(0, Math.min(LAST_FRAME, Math.round(frame)));
     if (segmentedPlayback) {
@@ -1124,7 +1583,7 @@ function setupWebpSequence(run: number): Runtime {
       playToggle.classList.add("visible");
     }
     pendingSeek = { frame: target, startedAt: currentTime() };
-    startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+    startedAt = null;
     loadOne(target);
     draw(target);
     recordEvent(`seek requested frame ${target}`);
@@ -1133,14 +1592,15 @@ function setupWebpSequence(run: number): Runtime {
     togglePlayback();
   };
   canvas.addEventListener("click", clickListener);
-  playToggle.classList.add("visible");
-  playToggle.textContent = "Pause / play";
+  playToggle.classList.remove("visible");
+  playToggle.textContent = "Pause animation";
   pump();
   startAnimation();
   return {
     variant: "c",
     pauseForScrub,
     resumeFromScrub,
+    resumeAfterPresented,
     togglePlayback,
     seek,
     destroy: () => {
@@ -1169,13 +1629,20 @@ function fallbackFrom(variant: Variant, reason: string): void {
     return;
   }
   recordEvent(`${definition(variant).shortLabel} → ${definition(next).shortLabel} fallback`);
-  startRenderer(next);
+  playbackBinding?.dispatch({
+    type: "renderer-fallback",
+    atMs: playbackTimeMs(),
+    from: variant,
+    to: next,
+  });
+  startRenderer(next, true);
 }
 
-function startRenderer(variant: Variant): void {
+function startRenderer(variant: Variant, preservePlayback = false): void {
   runId += 1;
   const run = runId;
   currentVariant = variant;
+  if (!preservePlayback || playbackBinding === null) playbackBinding = createPlaybackBinding(variant);
   runtime?.destroy();
   runtime = null;
   mediaStage.replaceChildren();
@@ -1195,7 +1662,13 @@ function startRenderer(variant: Variant): void {
   if (fallback) {
     // Keep one frame of the reason in the diagnostic log, then let the next
     // renderer own the stage and all later events.
-    startRenderer(fallback);
+    playbackBinding?.dispatch({
+      type: "renderer-fallback",
+      atMs: playbackTimeMs(),
+      from: variant,
+      to: fallback,
+    });
+    startRenderer(fallback, true);
     return;
   }
   runtime = setupWebpSequence(run);
@@ -1208,6 +1681,7 @@ function resetForRequestedVariant(variant: Variant): void {
   metrics.requested = variant;
   scrubHeldFrame = null;
   scrubPointerActive = false;
+  scrubCompletedFrameAwaitingChange = null;
   const probe = document.createElement("video");
   metrics.vp9 = probe.canPlayType('video/webm; codecs="vp09.00.10.08"') || "unsupported";
   metrics.h264 = probe.canPlayType('video/mp4; codecs="avc1.64001f"') || "unsupported";
@@ -1273,11 +1747,13 @@ function updateSwitcher(): void {
 
 function beginScrub(frame: number): void {
   const target = normalizeFrame(frame);
+  scrubCompletedFrameAwaitingChange = null;
   if (scrubHeldFrame === null) {
     runtime?.pauseForScrub();
     recordEvent(`scrub started at frame ${target}`);
   }
-  setScrubHold(target, "held · seek pending");
+  playbackBinding?.dispatch({ type: "scrub-input", atMs: playbackTimeMs(), frame: target });
+  setScrubHold(target, "seeking");
   metrics.state = `scrubbing frame ${target}`;
   runtime?.seek(target);
   recordEvent(`scrub input captured frame ${target}`);
@@ -1293,9 +1769,16 @@ playToggle.addEventListener("click", () => {
   if (scrubHeldFrame !== null && runtime) {
     const heldFrame = scrubHeldFrame;
     scrubPointerActive = false;
+    playbackBinding?.dispatch({ type: "user-play", atMs: playbackTimeMs() });
     setScrubHold(null, "idle");
     runtime.resumeFromScrub(heldFrame);
     return;
+  }
+  const playback = playbackBinding?.snapshot();
+  if (playback?.actualPlayback === "playing") {
+    playbackBinding?.dispatch({ type: "user-pause", atMs: playbackTimeMs() });
+  } else {
+    playbackBinding?.dispatch({ type: "user-play", atMs: playbackTimeMs() });
   }
   runtime?.togglePlayback();
 });
@@ -1304,24 +1787,45 @@ scrub.addEventListener("pointerdown", () => {
 });
 scrub.addEventListener("pointerup", () => {
   scrubPointerActive = false;
-  if (scrubHeldFrame === null) return;
-  metrics.scrubState = "held · release via Play";
-  metrics.state = `scrub held frame ${scrubHeldFrame}`;
+  if (scrubHeldFrame === null) {
+    if (scrubCompletedFrameAwaitingChange !== null) {
+      playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
+    }
+    return;
+  }
+  metrics.scrubState = "seeking · waiting for presented frame";
+  metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
   scrub.value = String(scrubHeldFrame);
+  playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
   renderMetrics();
-  recordEvent(`scrub pointer released; holding frame ${scrubHeldFrame}`);
+  recordEvent(`scrub pointer released; waiting for frame ${scrubHeldFrame}`);
 });
 scrub.addEventListener("pointercancel", () => {
   scrubPointerActive = false;
-  if (scrubHeldFrame === null) return;
-  metrics.scrubState = "held · release via Play";
-  metrics.state = `scrub held frame ${scrubHeldFrame}`;
+  if (scrubHeldFrame === null) {
+    if (scrubCompletedFrameAwaitingChange !== null) {
+      playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
+    }
+    return;
+  }
+  metrics.scrubState = "seeking · waiting for presented frame";
+  metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
   scrub.value = String(scrubHeldFrame);
+  playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
   renderMetrics();
-  recordEvent(`scrub pointer canceled; holding frame ${scrubHeldFrame}`);
+  recordEvent(`scrub pointer canceled; waiting for frame ${scrubHeldFrame}`);
 });
 scrub.addEventListener("change", (scrubEvent) => {
   const capturedFrame = scrubInputFrame(scrubEvent);
+  if (scrubHeldFrame === null && scrubCompletedFrameAwaitingChange !== null) {
+    const completedFrame = scrubCompletedFrameAwaitingChange;
+    scrubCompletedFrameAwaitingChange = null;
+    scrub.value = String(completedFrame);
+    playbackBinding?.dispatch({ type: "scrub-change", atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
+    renderMetrics();
+    recordEvent(`scrub change acknowledged after presented frame ${completedFrame}`);
+    return;
+  }
   const target = scrubHeldFrame ?? capturedFrame;
   if (target === null) return;
   // `input` already sought the final captured value. A change event only
@@ -1331,10 +1835,11 @@ scrub.addEventListener("change", (scrubEvent) => {
   scrubPointerActive = false;
   if (scrubHeldFrame !== null) {
     scrub.value = String(scrubHeldFrame);
-    metrics.scrubState = "held · release via Play";
-    metrics.state = `scrub held frame ${scrubHeldFrame}`;
+    metrics.scrubState = "seeking · waiting for presented frame";
+    metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
+    playbackBinding?.dispatch({ type: "scrub-change", atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
     renderMetrics();
-    recordEvent(`scrub change finalized frame ${scrubHeldFrame}`);
+    recordEvent(`scrub change finalized frame ${scrubHeldFrame}; target remains captured`);
   }
 });
 scrub.addEventListener("input", (scrubEvent) => {
