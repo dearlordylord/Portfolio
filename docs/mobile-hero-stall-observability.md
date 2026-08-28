@@ -1,7 +1,7 @@
 # Mobile hero stall observability
 
 **Checked:** 2026-08-28  
-**Status:** research-only proposal; no product behavior or tests changed  
+**Status:** delivery acceptance foundation; product playback is unchanged
 **Scope:** the reported iPhone-on-cellular case where the first-screen hero appears to stop before its terminal frame.
 
 ## Conclusion
@@ -81,15 +81,27 @@ Recommended rollout:
    and cache status). Purge cached objects after changing CORS.
    ([R2 CORS](https://developers.cloudflare.com/r2/buckets/cors/))
 4. Before changing the site, gate the origin with automated requests for the
-   first, middle, suffix, invalid, and full ranges. A valid single range must
-   return `206`, the exact `Content-Range` and byte count, stable identity, and
-   the correct bytes; an invalid range must return `416`. Require no
+   startup metadata range, first, middle, suffix, Safari-style nonzero
+   open-ended (`bytes=N-`), invalid, and full ranges. A valid single range must return
+   `206`, the exact `Content-Range` and byte count, stable identity, and the
+   correct bytes; an invalid range must return `416`. Require no
    `Content-Encoding` transformation and stable `Content-Length`/`ETag`, but do
    not treat an R2 multipart ETag as the file SHA-256. Independently verify that
    the MOV metadata needed to start decoding (the `moov` atom) is available
    without fetching the whole file and that the HEVC auxiliary-alpha track is
-   unchanged. Range support alone does not guarantee fast media startup. Test
-   once cold and once warm, then repeat from Safari on the real iPhone.
+   unchanged.
+
+   The probe makes the startup range the first media request and records its
+   observed cache status, `Age`, latency, and bytes before the full-object
+   cache observation. It does **not** call that request “cold”: an immutable key
+   may already be cached, and the probe cannot purge another cache. To obtain a
+   genuinely fresh-cache observation, upload the same bytes under a new
+   versioned key (or explicitly purge the custom-domain URL), run once, then
+   run again against that same key for the warm observation. The normal gate
+   requires the second full response to be `CF-Cache-Status: HIT` with numeric
+   `Age`; the first request's cache state is evidence to record, not a pass/fail
+   assumption. Range support alone does not guarantee fast media startup, so
+   the final cellular performance gate remains a real-iPhone test.
 5. If the direct R2 custom-domain response does not satisfy that contract, put
    a small Worker in front of the bucket. The R2 Workers API accepts byte-range
    reads, and Cloudflare's cache can answer client Range requests from a cached
@@ -106,6 +118,43 @@ Recommended rollout:
    deployment-time SHA-256 verification plus the immutable URL/ETag; otherwise
    streaming would be defeated by downloading the entire file again.
 
+The acceptance probe for step 4 is deliberately a command-line check, not a
+browser diagnostic window. After the R2/custom-domain object is available,
+run it with the exact media URL:
+
+```sh
+npm run probe:media-origin -- \
+  --url https://media.example.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov \
+  --origin https://portfolio.example \
+  # optionally enforce an origin-only startup latency budget:
+  # --startup-range-max-ms 750
+# or: MEDIA_ORIGIN_URL=https://media.example.com/... \
+#     MEDIA_SITE_ORIGIN=https://portfolio.example npm run probe:media-origin
+```
+
+[`scripts/probe-media-origin.ts`](../scripts/probe-media-origin.ts) reads the
+checked-in MOV and first performs a startup `GET` through the complete
+top-level `moov` box, before any full-object request. It then performs `HEAD`,
+a complete cache-prime observation, a second warm `GET`, and warm metadata/
+first/middle/suffix/open-ended (`bytes=N-`, bounded near the tail) and invalid ranges. It requires the expected
+`200`/`206`/`416` statuses, exact `Content-Length` and `Content-Range`,
+`video/quicktime`, `Accept-Ranges: bytes`, no `Content-Encoding`, one stable
+non-empty `ETag`, explicit CORS for the supplied site Origin, all range/
+identity/cache headers exposed, and `public, max-age=31536000, immutable`
+cache semantics. The second full response must report Cloudflare
+`CF-Cache-Status: HIT` with a numeric `Age`, proving that the prime request was
+cacheable and the next request was served warm. The startup request's cache
+state is reported but is never required to be `MISS`, because a true cold
+claim needs a new/purged URL. Every request reports elapsed time, status, cache
+state, and response bytes when a response is available; `--startup-range-max-ms`
+can turn an origin-only startup latency budget into an explicit RED check. The
+default final label is deliberately **protocol-only GREEN**, not cellular
+performance evidence. The probe follows no redirects, has both per-request
+and total deadlines (including response-body reads), bounds each response
+before buffering it, prints a RED report on any mismatch, and writes no files.
+A Pages URL is an intentional RED fixture: its range request currently returns
+`200` and the complete object, so it must not be used as evidence for streaming.
+
 R2 is proportionate for this asset: Standard storage currently includes a
 10 GB-month free tier, 10 million monthly Class B reads, and free Internet
 egress. The trade-off is operational rather than financial: one bucket, one
@@ -113,9 +162,12 @@ custom hostname/CORS policy, an upload-and-hash step, and possibly a very small
 range Worker. ([R2 pricing](https://developers.cloudflare.com/r2/pricing/))
 
 This migration should be a separate RED/GREEN slice from stall recovery. Its
-RED test is the current Pages `200` response to a Range request; GREEN is the
-new origin returning correct `206`/`416` responses and Safari reaching media
-readiness without a whole-file fetch. The stall trace remains necessary even
+protocol RED test is the current Pages `200` response to a Range request;
+protocol GREEN is the new origin returning correct `206`/`416` responses,
+including `bytes=N-`, with byte identity and a warm cache observation. That
+label does not claim that cellular startup is fast. The performance GREEN gate
+is a fresh real-iPhone Safari run over cellular (with the request timing and
+media trace), followed by a warm run; the stall trace remains necessary even
 after streaming, because correct delivery does not prove that frames continue
 to be presented.
 

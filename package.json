@@ -20,6 +20,7 @@
     "inspect:motion:compare": "tsx scripts/compare-motion-inspection.ts",
     "inspect:motion:device": "tsx scripts/merge-device-inspection.ts",
     "test:browser:webkit": "PLAYWRIGHT_WEBKIT=1 bash scripts/run-playwright.sh --project=webkit-mobile-390x844",
+    "probe:media-origin": "tsx scripts/probe-media-origin.ts",
     "verify:dist": "node scripts/verify-dist-assets.mjs",
     "check": "npm run typecheck && npm test && npm run build && npm run verify:dist"
   },
