@@ -11,6 +11,13 @@ const FORBIDDEN_PRODUCTION_OUTPUTS = [
   "dist/video-prototype/hero-color-matte.mp4",
   "dist/video-prototype/hq-hero-color-matte.mp4",
 ];
+const PRODUCTION_DOCUMENTS = ["dist/index.html"];
+const FORBIDDEN_DOCUMENT_MARKERS = [
+  /<(?:aside|nav|section|div|input|button)[^>]*(?:diagnostic|metric|prototype|debug|variant|scrub)/i,
+  /renderer diagnostics/i,
+  /prototype variants/i,
+  /frame \/ seek/i,
+];
 
 async function filesBelow(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -39,6 +46,13 @@ for (const forbidden of FORBIDDEN_PRODUCTION_OUTPUTS) {
     throw error;
   }
   throw new Error(`Draft-only output leaked into production dist: ${forbidden}`);
+}
+for (const documentPath of PRODUCTION_DOCUMENTS) {
+  const documentSource = await readFile(documentPath, "utf8");
+  const marker = FORBIDDEN_DOCUMENT_MARKERS.find((pattern) => pattern.test(documentSource));
+  if (marker) {
+    throw new Error(`Prototype/diagnostic markup leaked into production document: ${documentPath}`);
+  }
 }
 for (const root of roots) {
   const sourceFiles = await filesBelow(root);

@@ -223,6 +223,58 @@ test("normal page does not expose test diagnostics", async ({ page }) => {
   ).toBe(false);
 });
 
+test("normal page has no visible prototype or diagnostic surfaces", async ({ page }) => {
+  await prepareLocalPage(page);
+  // The assertion is intentionally DOM-level: a diagnostic panel is a user-
+  // visible product regression even if its inspection API is correctly gated.
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const visibleSurfaces = await page.evaluate(() => {
+    const selectors = [
+      '[id*="diagnostic" i]',
+      '[class*="diagnostic" i]',
+      '[id*="metric" i]',
+      '[class*="metric" i]',
+      '[id*="prototype" i]',
+      '[class*="prototype" i]',
+      '[id*="debug" i]',
+      '[class*="debug" i]',
+      '[id*="variant" i]',
+      '[class*="variant" i]',
+      '[id*="scrub" i]',
+      '[class*="scrub" i]',
+    ];
+    const marker = /renderer diagnostics|requested variant|frame \/ seek|prototype variants|native vp9|webgl fallback|active renderer/i;
+    const isVisible = (element: Element): boolean => {
+      const node = element as HTMLElement;
+      const style = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number.parseFloat(style.opacity || "1") > 0
+        && box.width > 0
+        && box.height > 0;
+    };
+    const elements = [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+    return elements
+      .filter(isVisible)
+      .map((element) => ({
+        selector: element.id ? `#${element.id}` : element.className || element.tagName.toLowerCase(),
+        text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120),
+      }))
+      .concat(
+        [...document.body.querySelectorAll("*")]
+          .filter((element) => isVisible(element) && marker.test(element.textContent || ""))
+          .map((element) => ({
+            selector: element.id ? `#${element.id}` : element.className || element.tagName.toLowerCase(),
+            text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120),
+          })),
+      );
+  });
+
+  expect(visibleSurfaces).toEqual([]);
+});
+
 test("case overlay opens from data wiring and closes through native controls", async ({ page }) => {
   await prepareLocalPage(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
