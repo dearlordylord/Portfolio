@@ -94,9 +94,18 @@ export function fallbackProductionHeroRenderer(
 /** A native surface is never exposed before its media/readback gate passes. */
 export function nativeCandidateCanExpose(
   renderer: "h" | "a",
-  input: Readonly<{ loadedData: boolean; canPlay: boolean; alphaProof: boolean }>,
+  input: Readonly<{
+    loadedData: boolean;
+    canPlay: boolean;
+    alphaProof: boolean;
+    /** A real rVFC callback has observed a frame reaching the presentation path. */
+    presentationProof: boolean;
+  }>,
 ): boolean {
-  return input.loadedData && input.canPlay && (renderer === "h" || input.alphaProof);
+  return input.loadedData
+    && input.canPlay
+    && input.presentationProof
+    && (renderer === "h" || input.alphaProof);
 }
 
 export function nativeFrameToSeconds(frame: number): number {

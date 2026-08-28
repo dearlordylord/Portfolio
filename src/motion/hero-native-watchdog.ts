@@ -1,16 +1,20 @@
 /**
- * Deterministic post-readiness progress guard for the production H renderer.
+ * Deterministic post-readiness progress guard for the production native
+ * renderers (A and H).
  *
- * H is a direct DOM video, so its preparation can pass while a later cellular
- * range underflow stops presented frames. This model deliberately knows only
- * about observed presentation, visual motion intent, and media recovery
- * signals. The browser adapter owns the fallback side effect; this module
- * makes the timing boundary independently testable.
+ * A and H are direct DOM videos, so preparation can pass while a later range
+ * underflow stops presented frames. This model deliberately knows only about
+ * observed presentation, visual motion intent, and media recovery signals. The
+ * browser adapter owns the fallback side effect; this module makes the timing
+ * boundary independently testable.
  */
 
-/** H is authored at 15fps; 750ms allows roughly eleven missed frames. */
+/** Native media is authored at 15fps; 750ms allows roughly eleven missed frames. */
 export const HERO_NATIVE_H_FRAME_RATE = 15;
 export const HERO_NATIVE_H_UNDERFLOW_GRACE_MS = 750;
+/** Canonical renderer-neutral names; H aliases remain for existing consumers. */
+export const HERO_NATIVE_FRAME_RATE = HERO_NATIVE_H_FRAME_RATE;
+export const HERO_NATIVE_UNDERFLOW_GRACE_MS = HERO_NATIVE_H_UNDERFLOW_GRACE_MS;
 
 export type NativeHWatchdogStatus = "inactive" | "monitoring" | "tripped";
 
@@ -23,15 +27,19 @@ export type NativeHWatchdogState = Readonly<{
   stalled: boolean;
 }>;
 
+/** Renderer-neutral aliases used by the production adapter. */
+export type NativeWatchdogStatus = NativeHWatchdogStatus;
+export type NativeWatchdogState = NativeHWatchdogState;
+
 export type NativeHWatchdogObservation = Readonly<{
   atMs: number;
-  /** True only while the accepted H candidate remains the active surface. */
+  /** True only while the accepted native candidate remains the active surface. */
   active: boolean;
   /** True only while the app expects the visible media frame to advance. */
   motionExpected: boolean;
   /** Settled/at-target states are never treated as underflow. */
   atTarget: boolean;
-  /** Frame reported by rVFC or the existing timeupdate/currentTime bridge. */
+  /** Frame reported by rVFC; media events never count as presentation. */
   presentedFrame: number | null;
   /** Media events are evidence, not a prerequisite for the no-progress guard. */
   waiting?: boolean;
@@ -52,6 +60,9 @@ export type NativeHWatchdogResult = Readonly<{
     | "underflow-grace-exceeded";
 }>;
 
+export type NativeWatchdogObservation = NativeHWatchdogObservation;
+export type NativeWatchdogResult = NativeHWatchdogResult;
+
 export function initialNativeHWatchdogState(): NativeHWatchdogState {
   return {
     status: "inactive",
@@ -65,16 +76,16 @@ export function initialNativeHWatchdogState(): NativeHWatchdogState {
 
 function assertObservation(observation: NativeHWatchdogObservation, graceMs: number): void {
   if (!Number.isFinite(observation.atMs) || observation.atMs < 0) {
-    throw new RangeError("Native H watchdog time must be finite and non-negative");
+    throw new RangeError("Native watchdog time must be finite and non-negative");
   }
   if (!Number.isFinite(graceMs) || graceMs <= 0) {
-    throw new RangeError("Native H watchdog grace must be positive");
+    throw new RangeError("Native watchdog grace must be positive");
   }
   if (
     observation.presentedFrame !== null
     && (!Number.isFinite(observation.presentedFrame) || observation.presentedFrame < 0)
   ) {
-    throw new RangeError("Native H presented frame must be finite and non-negative");
+    throw new RangeError("Native presented frame must be finite and non-negative");
   }
 }
 
@@ -87,7 +98,7 @@ function inactiveResult(): NativeHWatchdogResult {
 }
 
 /**
- * Advance the H watchdog with one observed media/scheduler sample.
+ * Advance the native watchdog with one observed media/scheduler sample.
  *
  * A strictly forward presented frame resets the grace window. A repeated
  * frame does not count as progress, even if `timeupdate` keeps firing. The
@@ -158,3 +169,8 @@ export function advanceNativeHWatchdog(
     reason: "underflow-grace-exceeded",
   };
 }
+
+/** Renderer-neutral entry points. The H-suffixed exports above are retained as
+ * a compatibility surface for existing diagnostics and tests. */
+export const initialNativeWatchdogState = initialNativeHWatchdogState;
+export const advanceNativeWatchdog = advanceNativeHWatchdog;

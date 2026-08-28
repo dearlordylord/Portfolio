@@ -70,14 +70,27 @@ describe("production hero scene fallback policy", () => {
   });
 
   it("commits only a decoded C frame within the explicit handoff tolerance", () => {
-    const targetFrame = 90;
+    const preservedFrame = 90;
     expect(HERO_NATIVE_FALLBACK_FRAME_TOLERANCE).toBe(3);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame, decoded: true })).toBe(true);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame - 3, decoded: true })).toBe(true);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame + 3, decoded: true })).toBe(true);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame - 4, decoded: true })).toBe(false);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame + 4, decoded: true })).toBe(false);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: targetFrame, decoded: false })).toBe(false);
-    expect(shouldCommitNativeFallbackHandoff({ targetFrame, renderedFrame: null, decoded: true })).toBe(false);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame, decoded: true })).toBe(true);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame - 3, decoded: true })).toBe(true);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame + 3, decoded: true })).toBe(true);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame - 4, decoded: true })).toBe(false);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame + 4, decoded: true })).toBe(false);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: preservedFrame, decoded: false })).toBe(false);
+    expect(shouldCommitNativeFallbackHandoff({ preservedFrame, renderedFrame: null, decoded: true })).toBe(false);
+  });
+
+  it("commits fallback against the last presented frame, not an advanced application target", () => {
+    expect(shouldCommitNativeFallbackHandoff({
+      preservedFrame: 70,
+      renderedFrame: 100,
+      decoded: true,
+    })).toBe(false);
+    expect(shouldCommitNativeFallbackHandoff({
+      preservedFrame: 70,
+      renderedFrame: 71,
+      decoded: true,
+    })).toBe(true);
   });
 });

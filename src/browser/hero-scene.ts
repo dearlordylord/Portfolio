@@ -24,9 +24,9 @@ import {
 } from "../motion/scheduler";
 import { BoundedFrameCache, prefetchFrames } from "../motion/sequence-cache";
 import {
-  advanceNativeHWatchdog,
-  initialNativeHWatchdogState,
-  type NativeHWatchdogState,
+  advanceNativeWatchdog,
+  initialNativeWatchdogState,
+  type NativeWatchdogState,
 } from "../motion/hero-native-watchdog";
 import {
   fallbackProductionHeroRenderer,
@@ -48,6 +48,17 @@ import {
   type ProductionHeroRenderer,
   type ProductionHeroRendererPreference,
 } from "../motion/hero-renderer";
+import {
+  initialNativePreparationState,
+  reduceNativePreparation,
+  type NativePreparationEvent,
+  type NativePreparationState,
+} from "../motion/hero-native-preparation";
+import {
+  decideNativePlaybackSync,
+  NATIVE_PLAYBACK_POSITION_EPSILON_SECONDS,
+} from "../motion/native-playback-sync";
+import { sampleNativeTimeline, shouldProjectNativeTimeline } from "../motion/native-timeline";
 
 const HERO_BREAKPOINT = HERO_LAYOUT_CONTRACT.breakpoint;
 const HERO_DRIFT_FRAMES = HERO_CONTRACT.driftFrames;
@@ -134,7 +145,8 @@ export function mobileHeroInputDisposition(
 }
 
 export type NativeFallbackHandoffInput = Readonly<{
-  targetFrame: number;
+  /** The last frame actually visible on the native surface. */
+  preservedFrame: number;
   renderedFrame: number | null;
   /** True only after the candidate C image passed its load/dimension gate. */
   decoded: boolean;
@@ -151,13 +163,13 @@ export function shouldCommitNativeFallbackHandoff(
   input: NativeFallbackHandoffInput,
 ): boolean {
   const tolerance = input.toleranceFrames ?? HERO_NATIVE_FALLBACK_FRAME_TOLERANCE;
-  if (!Number.isFinite(input.targetFrame) || !Number.isFinite(tolerance) || tolerance < 0) {
+  if (!Number.isFinite(input.preservedFrame) || !Number.isFinite(tolerance) || tolerance < 0) {
     throw new RangeError("Native fallback handoff frames must be finite");
   }
   return input.decoded === true
     && input.renderedFrame !== null
     && Number.isFinite(input.renderedFrame)
-    && Math.abs(input.renderedFrame - input.targetFrame) <= tolerance;
+    && Math.abs(input.renderedFrame - input.preservedFrame) <= tolerance;
 }
 
 type HeroElementId =
@@ -285,10 +297,30 @@ export type HeroSceneSnapshot = {
     visible: boolean;
     preparation: "idle" | "hidden" | "ready" | "failed";
     fallback: { from: ProductionHeroRenderer; to: "c"; reason: string } | null;
+    /** Count of actual native currentTime writes, not media time updates. */
+    seekCount: number;
+    lastSeekFrame: number | null;
+    /** Native handoff evidence keeps application intent distinct from visible media. */
+    handoff: {
+      targetFrame: number;
+      preservedFrame: number;
+      renderedFrame: number | null;
+      committed: boolean;
+    } | null;
     source: string | null;
     assetId: string | null;
+    /** Presented-frame watchdog applies equally to native A and H. */
+    nativeWatchdog: {
+      status: NativeWatchdogState["status"];
+      lastPresentedFrame: number | null;
+      lastProgressAtMs: number | null;
+      noProgressSinceMs: number | null;
+      waiting: boolean;
+      stalled: boolean;
+    };
+    /** Compatibility alias for existing diagnostic consumers. */
     nativeHWatchdog: {
-      status: NativeHWatchdogState["status"];
+      status: NativeWatchdogState["status"];
       lastPresentedFrame: number | null;
       lastProgressAtMs: number | null;
       noProgressSinceMs: number | null;
@@ -550,7 +582,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   let nativeVideoFrameHandle: number | null = null;
   let nativeStopped = false;
   let nativePlaybackPhase: HeroPhase | null = null;
-  let nativeHWatchdogState: NativeHWatchdogState = initialNativeHWatchdogState();
+  let nativePlaybackRate: number | null = null;
+  let nativeInitialPositioned = false;
+  let nativeSeekCount = 0;
+  let nativeLastSeekFrame: number | null = null;
+  let nativePreparationState: NativePreparationState | null = null;
+  let nativeWatchdogState: NativeWatchdogState = initialNativeWatchdogState();
   // A keeps its existing Blob preparation path. H is deliberately excluded:
   // Safari must own range requests through the media element so startup and
   // seeking never depend on a client-side full-object fetch.
@@ -562,6 +599,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     targetFrame: number;
     preservedFrame: number;
   } | null = null;
+  let nativeHandoff: HeroSceneSnapshot["renderer"]["handoff"] = null;
   let cRendererStarted = false;
   const introFrameIndices = Array.from(
     { length: HERO_CONTRACT.introEndFrame - HERO_CONTRACT.startFrame + 1 },
@@ -678,7 +716,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     phaseStartTime = null;
     recordEvent(event, previous, next, reason);
     if (next === "reduced") {
-      resetNativeHWatchdog();
+      resetNativeWatchdog();
       if (readinessTimer !== null) {
         timerApi.clearTimeout(readinessTimer);
         readinessTimer = null;
@@ -773,24 +811,114 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     nativePreparationTimer = null;
   }
 
-  function updateNativePresentedFrame(currentTimeSeconds: number): void {
-    if (!Number.isFinite(currentTimeSeconds)) return;
-    nativePresentedFrame = clamp(
-      nativeFrameFromSeconds(currentTimeSeconds),
+  /** Commit a frame only when the compositor reports it through rVFC. */
+  function updateNativePresentedFrame(mediaTimeSeconds: number): boolean {
+    if (!Number.isFinite(mediaTimeSeconds)) return false;
+    const nextFrame = clamp(
+      nativeFrameFromSeconds(mediaTimeSeconds),
       HERO_CONTRACT.startFrame,
       HERO_NATIVE_END_FRAME,
     );
+    // A normal video callback sequence is monotonic. If a browser delivers a
+    // delayed callback after a newer frame (or a stale callback from a seek),
+    // keep the already-visible native frame authoritative rather than making
+    // the app timeline blink backwards. Preparation is still allowed to move
+    // from a later covered callback back to frame zero.
+    if (
+      nativeVisible
+      && nativePresentedFrame !== null
+      && nextFrame < nativePresentedFrame
+    ) return false;
+    nativePresentedFrame = nextFrame;
+    return true;
   }
 
-  function resetNativeHWatchdog(): void {
-    nativeHWatchdogState = initialNativeHWatchdogState();
+  /**
+   * Project one compositor-presented native frame into the shared hero state.
+   *
+   * Native A/H have no RAF clock: RAF is allowed to paint the latest sample and
+   * run the bounded watchdog, but only rVFC mediaTime may advance targetFrame,
+   * cues, phaseElapsedMs, or the semantic phase boundaries.
+   */
+  function syncNativeTimelineFromPresentation(
+    mediaTimeSeconds: number,
+    presentedAtMs: number,
+  ): void {
+    if (
+      !shouldProjectNativeTimeline({
+        nativeActive: rendererActive === "h" || rendererActive === "a",
+        nativeVisible,
+        nativeStopped,
+        documentVisible: !browserDocument.hidden,
+        heroVisible: isVisible,
+        phase,
+      })
+      || !Number.isFinite(mediaTimeSeconds)
+      || !Number.isFinite(presentedAtMs)
+    ) return;
+
+    const sample = sampleNativeTimeline(mediaTimeSeconds);
+    const previousPhase = phase;
+    if (sample.phase !== "intro" && phase === "intro") {
+      transition("intro-complete", "native frame 31 presented");
+    }
+    if (sample.playbackCompleted && phase === "playing") {
+      playbackCompleted = true;
+      transition("playback-complete", "native terminal frame 149 presented");
+    }
+    // A malformed/reordered callback must not move the reducer backwards. The
+    // media sample still remains useful as presented evidence for diagnostics,
+    // but a completed phase owns its terminal visual permanently.
+    const phaseAfterTransition = phase as HeroPhase;
+    if (phaseAfterTransition === "complete" || phaseAfterTransition === "exit-hold" || phaseAfterTransition === "released") {
+      targetFrame = HERO_CONTRACT.endFrame;
+      displayFrame = HERO_CONTRACT.endFrame;
+      phaseElapsedMs = HERO_CONTRACT.playbackDurationMs;
+      playbackCompleted = true;
+      if (previousPhase !== phase) syncNativePlayback();
+      render();
+      return;
+    }
+
+    targetFrame = sample.frame;
+    displayFrame = sample.frame;
+    phaseElapsedMs = sample.phaseElapsedMs;
+    phaseStartTime = presentedAtMs - sample.phaseElapsedMs;
+    if (sample.playbackCompleted) playbackCompleted = true;
+
+    // The media clock crosses the intro boundary without a seek or pause. The
+    // only native control at that boundary is the authored rate change.
+    if (previousPhase !== phase || sample.playbackCompleted) syncNativePlayback();
+    render();
   }
 
-  function observeNativeHWatchdog(
+  function seekNativeToFrame(video: HTMLVideoElement, frame: number, reason: string): boolean {
+    const targetSeconds = nativeFrameToSeconds(clamp(frame, HERO_CONTRACT.startFrame, HERO_NATIVE_END_FRAME));
+    const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : null;
+    if (currentTime !== null && Math.abs(currentTime - targetSeconds) <= NATIVE_PLAYBACK_POSITION_EPSILON_SECONDS) {
+      return false;
+    }
+    video.currentTime = targetSeconds;
+    nativeSeekCount += 1;
+    nativeLastSeekFrame = clamp(frame, HERO_CONTRACT.startFrame, HERO_NATIVE_END_FRAME);
+    recordEvent("native-seek", rendererActive, rendererActive, `frame=${nativeLastSeekFrame}; reason=${reason}; count=${nativeSeekCount}`);
+    return true;
+  }
+
+  function applyNativePreparationEvent(event: NativePreparationEvent): void {
+    if (!nativePreparationState) return;
+    nativePreparationState = reduceNativePreparation(nativePreparationState, event);
+  }
+
+  function resetNativeWatchdog(): void {
+    nativeWatchdogState = initialNativeWatchdogState();
+  }
+
+  function observeNativeWatchdog(
     atMs: number,
     signals: Readonly<{ waiting?: boolean; stalled?: boolean; recovery?: boolean }> = {},
   ): void {
-    const active = rendererActive === "h"
+    const active = (rendererActive === "h" || rendererActive === "a")
       && nativeVisible
       && !nativeStopped
       && nativeVideo !== null;
@@ -799,8 +927,8 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       && !reducedMotion
       && (phase === "intro" || phase === "playing");
     const atTarget = !motionExpected;
-    const result = advanceNativeHWatchdog(
-      nativeHWatchdogState,
+    const result = advanceNativeWatchdog(
+      nativeWatchdogState,
       {
         atMs,
         active,
@@ -810,24 +938,24 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         ...signals,
       },
     );
-    nativeHWatchdogState = result.state;
+    nativeWatchdogState = result.state;
     if (result.action === "fallback") {
       const silenceMs = result.state.lastProgressAtMs === null
         ? "unknown"
         : `${Math.max(0, atMs - result.state.lastProgressAtMs)}ms`;
       failNativeCandidate(
-        `${result.reason}: H presented-frame progress stalled for ${silenceMs}`
+        `${result.reason}: ${rendererActive.toUpperCase()} presented-frame progress stalled for ${silenceMs}`
           + ` (waiting=${result.state.waiting}; stalled=${result.state.stalled})`,
       );
     }
   }
 
-  function nativeHRecoveryRequestsSuppressed(): boolean {
-    return rendererActive === "h"
+  function nativeRecoveryRequestsSuppressed(): boolean {
+    return (rendererActive === "h" || rendererActive === "a")
       && (
-        nativeHWatchdogState.waiting
-        || nativeHWatchdogState.stalled
-        || nativeHWatchdogState.noProgressSinceMs !== null
+        nativeWatchdogState.waiting
+        || nativeWatchdogState.stalled
+        || nativeWatchdogState.noProgressSinceMs !== null
       );
   }
 
@@ -841,7 +969,10 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     nativeVideoFrameHandle = null;
   }
 
-  function observeNativePresentedFrame(video: HTMLVideoElement): void {
+  function observeNativePresentedFrame(
+    video: HTMLVideoElement,
+    onPresented?: (frame: number, mediaTimeSeconds: number) => void,
+  ): void {
     const frameVideo = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (
         callback: (timestampMs: number, metadata: { mediaTime: number }) => void,
@@ -849,12 +980,22 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       cancelVideoFrameCallback?: (handle: number) => void;
     };
     const observe = (): void => {
-      if (nativeStopped || nativeVideo !== video || typeof frameVideo.requestVideoFrameCallback !== "function") return;
+      if (
+        nativeStopped
+        || nativeVideo !== video
+        || typeof frameVideo.requestVideoFrameCallback !== "function"
+        || nativeVideoFrameHandle !== null
+      ) return;
       nativeVideoFrameHandle = frameVideo.requestVideoFrameCallback((_timestampMs, metadata) => {
         nativeVideoFrameHandle = null;
         if (nativeStopped || nativeVideo !== video) return;
-        updateNativePresentedFrame(metadata.mediaTime);
-        observeNativeHWatchdog(nowMs());
+        const wasVisible = nativeVisible;
+        const accepted = updateNativePresentedFrame(metadata.mediaTime);
+        if (accepted || !wasVisible) {
+          onPresented?.(nativePresentedFrame ?? 0, metadata.mediaTime);
+          syncNativeTimelineFromPresentation(metadata.mediaTime, nowMs());
+        }
+        observeNativeWatchdog(nowMs());
         observe();
       });
     };
@@ -863,7 +1004,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function stopNativeCandidate(): void {
     nativeStopped = true;
-    resetNativeHWatchdog();
+    resetNativeWatchdog();
     nativeFetchController?.abort();
     nativeFetchController = null;
     clearNativePreparationTimer();
@@ -882,7 +1023,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     nativeSource = null;
     nativeVideo = null;
     nativePoster = null;
+    nativePresentedFrame = null;
     nativeVisible = false;
+    nativePlaybackPhase = null;
+    nativePlaybackRate = null;
+    nativeInitialPositioned = false;
+    nativePreparationState = null;
     pendingNativeHandoff = null;
     elements.nativeStage.replaceChildren();
     removeClass(elements.nativeStage, "active");
@@ -897,7 +1043,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
    */
   function suspendNativeCandidateForHandoff(): void {
     nativeStopped = true;
-    resetNativeHWatchdog();
+    resetNativeWatchdog();
     nativeFetchController?.abort();
     nativeFetchController = null;
     clearNativePreparationTimer();
@@ -908,8 +1054,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     stopNativeFrameObservation();
     if (nativeVideo) {
       nativeVideo.pause();
-      if (nativePresentedFrame === null) updateNativePresentedFrame(nativeVideo.currentTime);
     }
+    nativePlaybackPhase = null;
+    nativePlaybackRate = null;
   }
 
   function startCRenderer(reason: string): void {
@@ -925,6 +1072,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
           HERO_CONTRACT.startFrame,
           HERO_CONTRACT.endFrame,
         ),
+      };
+      nativeHandoff = {
+        targetFrame: pendingNativeHandoff.targetFrame,
+        preservedFrame: pendingNativeHandoff.preservedFrame,
+        renderedFrame: null,
+        committed: false,
       };
       suspendNativeCandidateForHandoff();
     } else {
@@ -971,11 +1124,14 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   function maybeCompleteNativeHandoff(): boolean {
     const handoff = pendingNativeHandoff;
     if (!handoff || rendererActive !== "c" || disposed) return false;
-    const selection = registry.selectFrame(handoff.targetFrame, cachedFrameKeys());
+    // The old native surface is the visual authority until C is ready. The
+    // application target may already be ahead while C decodes; selecting it
+    // would create a visible jump at the exact handoff boundary.
+    const selection = registry.selectFrame(handoff.preservedFrame, cachedFrameKeys());
     const image = selection.renderedFrame === null ? undefined : cFrameCache.get(selection.renderedFrame);
     const decoded = Boolean(image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0);
     if (!shouldCommitNativeFallbackHandoff({
-      targetFrame: handoff.targetFrame,
+      preservedFrame: handoff.preservedFrame,
       renderedFrame: selection.renderedFrame,
       decoded,
     })) return false;
@@ -983,13 +1139,20 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     // Every timeline/navigation field is intentionally untouched. Only the
     // renderer surface changes, and both surfaces are already in the same
     // task, so the browser cannot paint an intermediate frame-0 state.
+    if (nativeHandoff) {
+      nativeHandoff = {
+        ...nativeHandoff,
+        renderedFrame: selection.renderedFrame,
+        committed: true,
+      };
+    }
     pendingNativeHandoff = null;
     stopNativeCandidate();
     recordEvent(
       "renderer-handoff",
       "native",
       "c",
-      `target=${handoff.targetFrame}; frame=${selection.renderedFrame}; tolerance=${HERO_NATIVE_FALLBACK_FRAME_TOLERANCE}`,
+      `target=${handoff.targetFrame}; preserved=${handoff.preservedFrame}; frame=${selection.renderedFrame}; tolerance=${HERO_NATIVE_FALLBACK_FRAME_TOLERANCE}`,
     );
     render();
     return true;
@@ -1009,7 +1172,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   function acceptNativeCandidate(kind: "h" | "a"): void {
     if (disposed || nativeStopped || rendererActive !== kind || !nativeVideo) return;
     clearNativePreparationTimer();
-    if (kind === "h") resetNativeHWatchdog();
+    resetNativeWatchdog();
     rendererPreparation = "ready";
     nativeVisible = true;
     addClass(elements.nativeStage, "visible");
@@ -1017,7 +1180,14 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     nativePoster?.remove();
     nativePoster = null;
     addClass(elements.loader, "hidden");
-    recordEvent("renderer-ready", kind, kind, kind === "a" ? "decoded alpha proof passed" : "loadeddata and canplay passed");
+    recordEvent(
+      "renderer-ready",
+      kind,
+      kind,
+      kind === "a"
+        ? "decoded alpha + first rVFC presentation proof passed"
+        : "first rVFC presentation proof passed",
+    );
     beginNativeIntro(kind);
   }
 
@@ -1027,15 +1197,16 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     transition("assets-ready", `${kind.toUpperCase()} native candidate ready`);
     activateScene();
     nativePlaybackPhase = null;
-    nativeVideo.currentTime = nativeFrameToSeconds(HERO_CONTRACT.startFrame);
-    nativeVideo.playbackRate = nativeIntroPlaybackRate();
-    updateNativePresentedFrame(nativeVideo.currentTime);
+    // The hidden presentation gate already established a frame-0 proof. Do
+    // not seek after removing the poster: even an apparently equivalent write
+    // can make Safari repaint a stale/blank surface and recreate the initial
+    // jerk. Any required positioning/reset happened while the poster covered
+    // the compositor in `maybeAccept`.
+    nativeInitialPositioned = true;
+    nativePlaybackRate = nativeIntroPlaybackRate();
+    nativeVideo.playbackRate = nativePlaybackRate;
     render();
-    if (isVisible) {
-      void nativeVideo.play().catch((error: unknown) => {
-        failNativeCandidate(`native ${kind.toUpperCase()} playback start failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
+    if (isVisible) syncNativePlayback();
   }
 
   function alphaProbeForNative(video: HTMLVideoElement, onPass: () => void, onFail: (reason: string) => void): () => void {
@@ -1086,6 +1257,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     rendererActive = kind;
     rendererPreparation = "hidden";
     nativeStopped = false;
+    nativePresentedFrame = null;
     const source = kind === "h" ? HERO_NATIVE_H_SOURCE : HERO_NATIVE_A_SOURCE;
     nativeSource = source;
     const dimensions = nativeDimensions(kind);
@@ -1125,60 +1297,123 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (kind === "h") video.dataset.assetSha256 = HERO_NATIVE_H_SHA256;
     video.dataset.contentWidth = String(dimensions.width);
     video.dataset.contentHeight = String(dimensions.height);
-    video.style.visibility = "hidden";
+    // Keep the video compositor-active throughout preparation. The explicit
+    // stage layer policy places the poster/solid surface above it, so a real
+    // frame can be prepared without exposing a blank or relying on
+    // visibility:hidden (which suppresses the very presentation callback we
+    // need on Safari).
+    video.style.visibility = "visible";
+    video.style.zIndex = "0";
     nativeVideo = video;
     elements.nativeStage.append(video);
     syncNativeGeometry();
 
-    let loadedData = false;
-    let canPlay = false;
-    let alphaProof = kind === "h";
+    nativePreparationState = initialNativePreparationState(kind);
+    let presentationStarted = false;
+    let presentationResetRequested = false;
     const maybeAccept = (): void => {
-      if (nativeCandidateCanExpose(kind, { loadedData, canPlay, alphaProof })) {
+      if (
+        disposed
+        || nativeStopped
+        || rendererActive !== kind
+        || rendererPreparation !== "hidden"
+        || !nativePreparationState
+      ) return;
+      if (nativePreparationState.status === "ready" && nativeCandidateCanExpose(kind, nativePreparationState)) {
         acceptNativeCandidate(kind);
+        return;
+      }
+      // `loadeddata` and `canplay` are not a visibility proof. Once the
+      // media/alpha prerequisites are present, start a muted covered playback
+      // path so Safari can produce the rVFC evidence needed to remove the
+      // poster without a blank intermediate paint.
+      if (
+        !presentationStarted
+        && nativePreparationState.loadedData
+        && nativePreparationState.canPlay
+        && nativePreparationState.alphaProof
+      ) {
+        presentationStarted = true;
+        seekNativeToFrame(video, HERO_CONTRACT.startFrame, "initial-position");
+        nativeInitialPositioned = true;
+        nativePlaybackRate = nativeIntroPlaybackRate();
+        video.playbackRate = nativePlaybackRate;
+        observeNativePresentedFrame(video, (frame) => {
+          if (
+            frame > HERO_CONTRACT.startFrame
+            && !presentationResetRequested
+            && rendererPreparation === "hidden"
+          ) {
+            // A stale frame-zero proof (for example from a previous decode
+            // generation) is invalid as soon as the covered decoder reports a
+            // later first frame. Clear it before requesting the covered reset.
+            applyNativePreparationEvent({ type: "reset-presentation" });
+          }
+          applyNativePreparationEvent({ type: "presented-frame", frame });
+          // A decoder may satisfy the first callback with a later buffered
+          // frame. Keep that callback covered and explicitly rewind under the
+          // poster; exposing it first would create the visible backward blink
+          // reported on iOS. The first frame-0 callback after this correction
+          // is the only presentation proof that can open the gate.
+          if (
+            frame > HERO_CONTRACT.startFrame
+            && !presentationResetRequested
+            && rendererPreparation === "hidden"
+          ) {
+            presentationResetRequested = true;
+            video.pause();
+            seekNativeToFrame(video, HERO_CONTRACT.startFrame, "presentation-gate-reset");
+            nativeInitialPositioned = true;
+            nativePlaybackRate = nativeIntroPlaybackRate();
+            video.playbackRate = nativePlaybackRate;
+            void video.play().catch((error: unknown) => {
+              failNativeCandidate(`native ${kind.toUpperCase()} frame-0 presentation failed: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }
+          maybeAccept();
+        });
+        void video.play().catch((error: unknown) => {
+          failNativeCandidate(`native ${kind.toUpperCase()} hidden presentation failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
     };
-    const onLoadedMetadata = (): void => {
-      syncNativeGeometry();
-      // Before H is accepted this establishes a frame-0 baseline; after
-      // readiness, only rVFC metadata is allowed to advance H presentation
-      // evidence. A can keep its existing currentTime diagnostics.
-      if (kind !== "h" || !nativeVisible) updateNativePresentedFrame(video.currentTime);
-      observeNativeHWatchdog(nowMs());
+      const onLoadedMetadata = (): void => {
+        syncNativeGeometry();
+      // Metadata establishes dimensions only. It is not evidence that a
+      // decoded frame reached the compositor; that fact belongs exclusively
+      // to the rVFC callback below.
+      observeNativeWatchdog(nowMs());
       recordEvent("native-loadedmetadata", kind, kind, `${video.videoWidth}×${video.videoHeight}`);
     };
     const onLoadedData = (): void => {
-      loadedData = true;
-      if (kind !== "h" || !nativeVisible) updateNativePresentedFrame(video.currentTime);
+      applyNativePreparationEvent({ type: "loaded-data" });
       maybeAccept();
-      observeNativeHWatchdog(nowMs());
+      observeNativeWatchdog(nowMs());
     };
     const onCanPlay = (): void => {
-      canPlay = true;
+      applyNativePreparationEvent({ type: "can-play" });
       maybeAccept();
-      observeNativeHWatchdog(nowMs(), { recovery: true });
+      observeNativeWatchdog(nowMs(), { recovery: true });
     };
     const onTimeUpdate = (): void => {
       // `timeupdate` reports media position, not a frame that reached the
-      // screen. H's watchdog receives presentation progress only from rVFC;
-      // A retains its pre-existing currentTime bridge.
-      if (kind !== "h") updateNativePresentedFrame(video.currentTime);
-      observeNativeHWatchdog(nowMs());
+      // screen. It may arm/check the watchdog but can never advance the
+      // presented timeline for either native candidate.
+      observeNativeWatchdog(nowMs());
     };
     const onPlaying = (): void => {
-      if (kind !== "h") updateNativePresentedFrame(video.currentTime);
-      observeNativeHWatchdog(nowMs(), { recovery: true });
+      observeNativeWatchdog(nowMs(), { recovery: true });
       observeNativePresentedFrame(video);
     };
     const onWaiting = (): void => {
       recordEvent("native-waiting", kind, kind, "native media waiting for the next frame");
-      observeNativeHWatchdog(nowMs(), { waiting: true });
+      observeNativeWatchdog(nowMs(), { waiting: true });
     };
     const onStalled = (): void => {
       recordEvent("native-stalled", kind, kind, "native media fetch stalled");
-      observeNativeHWatchdog(nowMs(), { stalled: true });
+      observeNativeWatchdog(nowMs(), { stalled: true });
     };
-    const onProgress = (): void => observeNativeHWatchdog(nowMs(), { recovery: true });
+    const onProgress = (): void => observeNativeWatchdog(nowMs(), { recovery: true });
     const onError = (): void => {
       const detail = video.error ? `code ${video.error.code}${video.error.message ? ` (${video.error.message})` : ""}` : "unknown media error";
       failNativeCandidate(`${kind.toUpperCase()} media error: ${detail}`);
@@ -1205,12 +1440,13 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     };
     if (kind === "a") {
       nativeAlphaProbeStop = alphaProbeForNative(video, () => {
-        alphaProof = true;
+        applyNativePreparationEvent({ type: "alpha-proof" });
         maybeAccept();
       }, (reason) => failNativeCandidate(reason));
     }
     nativePreparationTimer = timerApi.setTimeout(() => {
       nativePreparationTimer = null;
+      applyNativePreparationEvent({ type: "timeout" });
       failNativeCandidate(`${kind.toUpperCase()} preparation timed out after ${HERO_NATIVE_PREPARATION_DEADLINE_MS} ms`);
     }, HERO_NATIVE_PREPARATION_DEADLINE_MS);
     // The poster is the only image loaded while a native candidate is being
@@ -1724,7 +1960,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function nativeTargetFrameForPhase(): number {
-    if (phase === "intro" || phase === "playing") return displayFrame;
+    if (phase === "intro" || phase === "playing") return targetFrame;
     if (phase === "ready") return pointerTarget();
     return HERO_NATIVE_END_FRAME;
   }
@@ -1734,48 +1970,60 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (!video || !nativeVisible || nativeStopped || rendererActive === "c") return;
     const target = clamp(nativeTargetFrameForPhase(), 0, HERO_NATIVE_END_FRAME);
     const targetSeconds = nativeFrameToSeconds(target);
-    const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     const phaseChanged = nativePlaybackPhase !== phase;
-    if (phase === "intro" || phase === "playing") {
-      nativePlaybackPhase = phase;
-      video.playbackRate = phase === "intro" ? nativeIntroPlaybackRate() : nativeMainPlaybackRate();
-      // Let the native decoder play continuously; correct only a visible
-      // drift so native presentation remains close to the contract's target frame.
-      // Once H has signalled an underflow or has entered its no-progress
-      // grace window, avoid issuing corrective seeks or repeated play calls:
-      // those requests can amplify the range/decoder stall we are measuring.
-      const hProgressGuarded = nativeHRecoveryRequestsSuppressed();
-      if (!hProgressGuarded && (phaseChanged || Math.abs(currentTime - targetSeconds) > 0.2)) {
-        video.currentTime = targetSeconds;
-        // A seek request changes the decoder's position, not the frame that
-        // has actually reached the screen. H's watchdog must wait for
-        // rVFC evidence; counting this command as presentation
-        // would reset the underflow deadline while the video is still stuck.
-        if (rendererActive !== "h") updateNativePresentedFrame(targetSeconds);
-      }
-      if (video.paused && !hProgressGuarded) {
-        void video.play().catch((error: unknown) => {
-          failNativeCandidate(`native ${rendererActive.toUpperCase()} playback failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      }
-      return;
+    if (phase === "loading") return;
+    const desiredPlaybackRate = phase === "intro"
+      ? nativeIntroPlaybackRate()
+      : phase === "playing"
+        ? nativeMainPlaybackRate()
+        : nativePlaybackRate ?? nativeMainPlaybackRate();
+    const decision = decideNativePlaybackSync({
+      phase,
+      currentTimeSeconds: Number.isFinite(video.currentTime) ? video.currentTime : null,
+      targetTimeSeconds: targetSeconds,
+      desiredPlaybackRate,
+      currentPlaybackRate: nativePlaybackRate,
+      phaseChanged,
+      initialPositioned: nativeInitialPositioned,
+      paused: video.paused,
+      recoverySuppressed: nativeRecoveryRequestsSuppressed(),
+    });
+    if (decision.setPlaybackRate !== null) {
+      video.playbackRate = decision.setPlaybackRate;
+      nativePlaybackRate = decision.setPlaybackRate;
     }
-
+    if (decision.seekToSeconds !== null) {
+      seekNativeToFrame(video, target, decision.reason);
+    }
+    nativeInitialPositioned = true;
     nativePlaybackPhase = phase;
-    video.pause();
-    if (phase === "ready" || phase === "complete" || phase === "exit-hold" || phase === "released" || phase === "reduced") {
-      if (phaseChanged || Math.abs(currentTime - targetSeconds) > 0.02) {
-        video.currentTime = targetSeconds;
-        // Keep H's presented-frame evidence tied to media events. A remains
-        // on its existing seek bookkeeping because its watchdog is inactive.
-        if (rendererActive !== "h") updateNativePresentedFrame(targetSeconds);
-      }
+    if (decision.pause) video.pause();
+    if (decision.play) {
+      void video.play().catch((error: unknown) => {
+        failNativeCandidate(`native ${rendererActive.toUpperCase()} playback failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     }
   }
 
   function onFrame(timestampMs: number, deltaMs: number): boolean {
     if (disposed || reducedMotion || !isVisible) return false;
     const elapsed = Math.max(0, finiteOr(deltaMs, 0));
+
+    // Native media owns its own monotonic clock. The scheduler still samples
+    // the watchdog and repaints the latest presented sample, but it must not
+    // advance phaseElapsedMs/targetFrame or call a corrective seek on RAF.
+    // Those fields move only in syncNativeTimelineFromPresentation(), which is
+    // fed by rVFC mediaTime.
+    if (
+      (rendererActive === "h" || rendererActive === "a")
+      && nativeVisible
+      && !nativeStopped
+    ) {
+      observeNativeWatchdog(timestampMs);
+      render();
+      if (phase === "intro" || phase === "playing" || phase === "exit-hold") return true;
+      return false;
+    }
 
     if (phase === "intro" || phase === "playing") {
       if (phaseStartTime === null) phaseStartTime = timestampMs - phaseElapsedMs;
@@ -1800,9 +2048,11 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       targetFrame = HERO_CONTRACT.endFrame;
     }
 
+    // Timed phases are owned by the authored linear clock/native media. A
+    // second exponential display clock would lag the video and invite
+    // corrective seeks; smoothing remains useful only for pointer/settled
+    // presentation states.
     const interpolation =
-      phase === "intro" ||
-      phase === "playing" ||
       phase === "ready" ||
       phase === "complete" ||
       phase === "exit-hold";
@@ -1810,10 +2060,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     else displayFrame = targetFrame;
     if (Math.abs(displayFrame - targetFrame) < 0.02) displayFrame = targetFrame;
     render();
-    // Sample the watchdog before playback synchronisation so an unchanged H
-    // frame starts its bounded grace window before any corrective seek/play
-    // request can be considered. This keeps the no-feedback rule explicit.
-    observeNativeHWatchdog(timestampMs);
+    // Sample the native watchdog before any adapter side effect. Native A/H
+    // progress is reset only by rVFC, never by an application clock.
+    observeNativeWatchdog(timestampMs);
     syncNativePlayback();
 
     if (phase === "intro" || phase === "playing" || phase === "exit-hold") return true;
@@ -1843,7 +2092,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function releaseHero(reason: string): void {
-    resetNativeHWatchdog();
+    resetNativeWatchdog();
     clearReadinessTimer();
     if (exitHoldTimer !== null) {
       timerApi.clearTimeout(exitHoldTimer);
@@ -2060,7 +2309,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       isVisible = entry?.isIntersecting ?? true;
       if (!isVisible) {
         deactivateScene();
-        resetNativeHWatchdog();
+        resetNativeWatchdog();
         // Intersection lifecycle pauses native playback immediately. The
         // shared scheduler may have no runnable hero tick while offscreen, so
         // waiting for syncNativePlayback() would let the video run ahead of
@@ -2240,15 +2489,28 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         visible: nativeVisible,
         preparation: rendererPreparation,
         fallback: rendererFallback,
+        seekCount: nativeSeekCount,
+        lastSeekFrame: nativeLastSeekFrame,
+        handoff: nativeHandoff,
         source: nativeSource,
         assetId: nativeVideo?.dataset.assetId ?? null,
+        nativeWatchdog: {
+          status: nativeWatchdogState.status,
+          lastPresentedFrame: nativeWatchdogState.lastPresentedFrame,
+          lastProgressAtMs: nativeWatchdogState.lastProgressAtMs,
+          noProgressSinceMs: nativeWatchdogState.noProgressSinceMs,
+          waiting: nativeWatchdogState.waiting,
+          stalled: nativeWatchdogState.stalled,
+        },
+        // Keep the old field for one release so existing inspection traces do
+        // not break while consumers migrate to the renderer-neutral name.
         nativeHWatchdog: {
-          status: nativeHWatchdogState.status,
-          lastPresentedFrame: nativeHWatchdogState.lastPresentedFrame,
-          lastProgressAtMs: nativeHWatchdogState.lastProgressAtMs,
-          noProgressSinceMs: nativeHWatchdogState.noProgressSinceMs,
-          waiting: nativeHWatchdogState.waiting,
-          stalled: nativeHWatchdogState.stalled,
+          status: nativeWatchdogState.status,
+          lastPresentedFrame: nativeWatchdogState.lastPresentedFrame,
+          lastProgressAtMs: nativeWatchdogState.lastProgressAtMs,
+          noProgressSinceMs: nativeWatchdogState.noProgressSinceMs,
+          waiting: nativeWatchdogState.waiting,
+          stalled: nativeWatchdogState.stalled,
         },
       },
       events: events.map((event) => ({ ...event })),

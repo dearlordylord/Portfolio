@@ -128,9 +128,36 @@ describe("production hero renderer policy", () => {
   });
 
   it("never exposes VP9 before decoded alpha proof", () => {
-    expect(nativeCandidateCanExpose("a", { loadedData: true, canPlay: true, alphaProof: false })).toBe(false);
-    expect(nativeCandidateCanExpose("a", { loadedData: true, canPlay: true, alphaProof: true })).toBe(true);
-    expect(nativeCandidateCanExpose("h", { loadedData: true, canPlay: true, alphaProof: false })).toBe(true);
+    expect(nativeCandidateCanExpose("a", {
+      loadedData: true,
+      canPlay: true,
+      alphaProof: false,
+      presentationProof: false,
+    })).toBe(false);
+    expect(nativeCandidateCanExpose("a", {
+      loadedData: true,
+      canPlay: true,
+      alphaProof: true,
+      presentationProof: false,
+    })).toBe(false);
+    expect(nativeCandidateCanExpose("a", {
+      loadedData: true,
+      canPlay: true,
+      alphaProof: true,
+      presentationProof: true,
+    })).toBe(true);
+    expect(nativeCandidateCanExpose("h", {
+      loadedData: true,
+      canPlay: true,
+      alphaProof: true,
+      presentationProof: false,
+    })).toBe(false);
+    expect(nativeCandidateCanExpose("h", {
+      loadedData: true,
+      canPlay: true,
+      alphaProof: true,
+      presentationProof: true,
+    })).toBe(true);
   });
 
   it("maps the existing hero phase durations to frames 31 and 149", () => {

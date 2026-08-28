@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { HERO_NATIVE_H_UNDERFLOW_GRACE_MS } from "../../src/motion/hero-native-watchdog";
 
 type DiagnosticsSnapshot = {
   viewport: { innerWidth: number; innerHeight: number; dpr: number };
@@ -71,8 +70,24 @@ type DiagnosticsSnapshot = {
         visible: boolean;
         preparation: "idle" | "hidden" | "ready" | "failed";
         fallback: { from: "h" | "a" | "c"; to: "c"; reason: string } | null;
+        seekCount: number;
+        lastSeekFrame: number | null;
+        handoff: {
+          targetFrame: number;
+          preservedFrame: number;
+          renderedFrame: number | null;
+          committed: boolean;
+        } | null;
         source: string | null;
         assetId: string | null;
+        nativeWatchdog: {
+          status: "inactive" | "monitoring" | "tripped";
+          lastPresentedFrame: number | null;
+          lastProgressAtMs: number | null;
+          noProgressSinceMs: number | null;
+          waiting: boolean;
+          stalled: boolean;
+        };
         nativeHWatchdog: {
           status: "inactive" | "monitoring" | "tripped";
           lastPresentedFrame: number | null;
@@ -252,6 +267,67 @@ async function dispatchNativeMediaError(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Drive the production adapter's compositor seam without depending on a real
+ * decoder. The callback is deliberately a single pending rVFC: the adapter
+ * must schedule the next one only after it consumes the previous presentation.
+ */
+async function installMockNativePresentation(page: Page): Promise<void> {
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    type FrameCallback = (timestampMs: number, metadata: { mediaTime: number }) => void;
+    let callback: FrameCallback | null = null;
+    let nextHandle = 0;
+    let currentTime = 0;
+    let seekCount = 0;
+    let simulationWrite = false;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+        if (!simulationWrite) seekCount += 1;
+      },
+    });
+    Object.defineProperty(video, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (next: FrameCallback): number => {
+        callback = next;
+        nextHandle += 1;
+        return nextHandle;
+      },
+    });
+    Object.defineProperty(video, "cancelVideoFrameCallback", {
+      configurable: true,
+      value: (): void => {
+        callback = null;
+      },
+    });
+    Object.defineProperty(window, "__emitNativePresentation", {
+      configurable: true,
+      value: (mediaTime: number): void => {
+        simulationWrite = true;
+        currentTime = mediaTime;
+        simulationWrite = false;
+        const pending = callback;
+        callback = null;
+        pending?.(performance.now(), { mediaTime });
+      },
+    });
+    Object.defineProperty(window, "__nativeSeekCount", {
+      configurable: true,
+      get: () => seekCount,
+    });
+  });
+}
+
+async function emitNativePresentation(page: Page, mediaTime: number): Promise<void> {
+  await page.evaluate((time) => {
+    const emit = (window as typeof window & { __emitNativePresentation?: (value: number) => void }).__emitNativePresentation;
+    if (!emit) throw new Error("mock native presentation callback is not installed");
+    emit(time);
+  }, mediaTime);
+}
+
 function writeBaseline(projectName: string, name: string, body: Buffer | string): void {
   if (process.env.WRITE_MOTION_BASELINE !== "1") return;
   const directory = path.resolve(
@@ -408,7 +484,7 @@ test("case dialog exposes its labelled semantics and traps Tab focus", async ({ 
   await expect(close).toBeFocused();
 });
 
-test("hero ready state is deterministic and inspectable", async ({ page }, testInfo) => {
+test("hero automatic playback is deterministic and inspectable", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
@@ -423,7 +499,7 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
 
   await page.clock.runFor(1600);
   const current = await snapshot(page);
-  expect(current.scenes.hero.phase).toBe("ready");
+  expect(current.scenes.hero.phase).toBe("playing");
   expect(current.scenes.hero.assets.loaded).toBeGreaterThanOrEqual(32);
   expect(current.scenes.hero.assets.fallbackCount).toBeGreaterThanOrEqual(0);
   expect(Array.isArray(current.scenes.hero.assets.failedAssets)).toBe(true);
@@ -487,7 +563,7 @@ test("mobile hero fails open when Safari-like image decode stalls", async ({ pag
     const state = await snapshot(page);
     const canvas = state.scenes.hero.canvas;
     const asset = canvas.renderedAsset;
-    expect(asset, "a loaded frame must be rendered after the ready handoff").not.toBeNull();
+    expect(asset, "a loaded frame must be rendered after the automatic playback handoff").not.toBeNull();
     if (!asset) throw new Error("rendered asset missing");
     return {
       state,
@@ -649,9 +725,9 @@ test("mobile hero gates on intro requests before demand-driven later loading", a
     .toBe(32);
   const ready = await snapshot(page);
   expect(ready.scenes.hero.assets.laterQueueStarted).toBe(true);
-  // Entering the ready phase enables later-frame requests, but it must not
-  // eagerly drain the 118-frame tail. The first later request is made only
-  // after a target moves into that neighborhood.
+  // Once the intro assets are ready, later-frame requests become eligible,
+  // but the adapter must not eagerly drain the 118-frame tail. The first
+  // later request is made only after a target moves into that neighborhood.
   expect(ready.scenes.hero.assets.requested).toBe(32);
   expect(ready.scenes.hero.assets.loaded).toBe(32);
   expect(ready.scenes.hero.assets.allReady).toBe(false);
@@ -920,7 +996,7 @@ test("production A becomes visible only after decoded alpha readiness and report
 
   await expect
     .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 10_000 })
-    .toBe("ready");
+    .toBe("playing");
   current = await snapshot(page);
   expect(current.scenes.hero.renderer.active).toBe("a");
   expect(Math.abs(
@@ -985,7 +1061,7 @@ test("production H assigns the immutable R2 URL directly without Blob preparatio
   releaseMediaRoute();
 });
 
-test("accepted H stays mounted and paused at the terminal frame after navigation", async ({ page }, testInfo) => {
+test("native preparation keeps a compositor-active video covered until frame zero", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native release coverage is covered by the desktop Chromium project");
   test.setTimeout(30_000);
   await prepareLocalPage(page);
@@ -1015,44 +1091,53 @@ test("accepted H stays mounted and paused at the terminal frame after navigation
     .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
     .toBe(expectedSource);
 
+  await installMockNativePresentation(page);
   await page.locator("#hero-native-stage video").evaluate((video) => {
     video.dispatchEvent(new Event("loadeddata"));
     video.dispatchEvent(new Event("canplay"));
   });
   await expect
     .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
-    .toBe("ready");
-  expect((await snapshot(page)).scenes.hero.renderer.visible).toBe(true);
-
-  await page.evaluate(() => {
-    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
-      new MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
-  });
-  const released = await snapshot(page);
-  expect(released.scenes.hero).toMatchObject({
-    phase: "released",
-    renderer: {
-      active: "h",
-      preparation: "ready",
-      visible: true,
-      source: expectedSource,
-    },
-  });
-  const terminal = await page.locator("#hero-native-stage video").evaluate((video) => ({
-    src: (video as HTMLVideoElement).src,
-    paused: (video as HTMLVideoElement).paused,
-    currentTime: (video as HTMLVideoElement).currentTime,
+    .toBe("hidden");
+  const covered = await page.locator("#hero-native-stage video").evaluate((video) => ({
     visibility: (video as HTMLElement).style.visibility,
+    zIndex: (video as HTMLElement).style.zIndex,
+    stageActive: video.parentElement?.classList.contains("active") ?? false,
+    stageVisible: video.parentElement?.classList.contains("visible") ?? false,
+    posterAboveVideo: (video.previousElementSibling as HTMLElement | null)?.className === "hero-native-poster",
   }));
-  expect(terminal.src).toBe(expectedSource);
-  expect(terminal.paused).toBe(true);
-  expect(terminal.currentTime).toBeCloseTo(149 / 15, 2);
-  expect(terminal.visibility).toBe("visible");
+  expect(covered).toMatchObject({
+    visibility: "visible",
+    zIndex: "0",
+    stageActive: true,
+    stageVisible: false,
+    posterAboveVideo: true,
+  });
+  expect((await snapshot(page)).scenes.hero.renderer.visible).toBe(false);
+
+  // A later first callback is never exposed. It requests one covered reset,
+  // then the frame-zero callback opens the gate without another seek.
+  await emitNativePresentation(page, 31 / 15);
+  expect((await snapshot(page)).scenes.hero.renderer.preparation).toBe("hidden");
+  expect((await snapshot(page)).scenes.hero.renderer.visible).toBe(false);
+  const resetSeekCount = (await snapshot(page)).scenes.hero.renderer.seekCount;
+  expect(resetSeekCount).toBe(1);
+
+  await emitNativePresentation(page, 0);
+  const ready = await snapshot(page);
+  expect(ready.scenes.hero.renderer).toMatchObject({
+    active: "h",
+    preparation: "ready",
+    visible: true,
+    source: expectedSource,
+    seekCount: resetSeekCount,
+  });
+  expect(ready.scenes.hero.phase).toBe("intro");
+  expect(ready.scenes.hero.renderer.nativeWatchdog.lastPresentedFrame).toBe(0);
   releaseMediaRoute();
 });
 
-test("H timeupdate/currentTime changes without rVFC still trip the presentation watchdog", async ({ page }, testInfo) => {
+test("native timeupdate/currentTime changes cannot fake compositor progress", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native watchdog coverage is covered by the desktop Chromium project");
   test.setTimeout(30_000);
   await prepareLocalPage(page);
@@ -1098,30 +1183,395 @@ test("H timeupdate/currentTime changes without rVFC still trip the presentation 
     video.dispatchEvent(new Event("loadeddata"));
     video.dispatchEvent(new Event("canplay"));
     // These are changing media positions, but no frame-presentation callback
-    // is delivered. The H watchdog must keep its deadline on actual rVFC
+    // is delivered. The native watchdog must keep its deadline on actual rVFC
     // evidence rather than treating timeupdate/currentTime as presentation.
     for (const frame of [1, 2, 3, 4]) {
       syntheticCurrentTime = frame / 15;
       video.dispatchEvent(new Event("timeupdate"));
     }
   });
-  await expect
-    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
-    .toBe("ready");
+  const covered = await snapshot(page);
+  expect(covered.scenes.hero.renderer).toMatchObject({
+    preparation: "hidden",
+    visible: false,
+    presentedFrame: null,
+  });
+  expect(covered.scenes.hero.targetFrame).toBe(0);
 
-  await page.clock.runFor(HERO_NATIVE_H_UNDERFLOW_GRACE_MS + 1);
+  // With no rVFC capability, the candidate cannot pass the first-frame gate;
+  // changing currentTime and emitting timeupdate is deliberately insufficient.
+  await page.clock.runFor(4_001);
   const fallback = await snapshot(page);
   expect(fallback.scenes.hero.renderer).toMatchObject({
     active: "c",
     fallback: {
       from: "h",
       to: "c",
-      reason: expect.stringContaining("underflow-grace-exceeded"),
+      reason: expect.stringContaining("preparation timed out"),
     },
   });
-  expect(fallback.scenes.hero.renderer.nativeHWatchdog.status).toBe("inactive");
+  expect(fallback.scenes.hero.renderer.nativeWatchdog.status).toBe("inactive");
   releaseMediaRoute();
 });
+
+test("native rVFC presentation sequence owns intro, playing, and completion", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "The deterministic native lifecycle seam is covered by desktop Chromium");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+  await page.addInitScript(() => {
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function play(): Promise<void> {
+      if (this.classList.contains("hero-native-video")) return Promise.resolve();
+      return nativePlay.call(this);
+    };
+  });
+  await installPausedClock(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe("https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov");
+
+  await installMockNativePresentation(page);
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    video.dispatchEvent(new Event("loadeddata"));
+    video.dispatchEvent(new Event("canplay"));
+  });
+  expect((await snapshot(page)).scenes.hero.renderer.preparation).toBe("hidden");
+
+  await emitNativePresentation(page, 0);
+  let current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "intro", targetFrame: 0, displayFrame: 0 });
+  expect(current.scenes.hero.renderer).toMatchObject({
+    preparation: "ready",
+    visible: true,
+    presentedFrame: 0,
+    seekCount: 0,
+  });
+
+  await emitNativePresentation(page, 10 / 15);
+  await page.evaluate(() => {
+    const video = document.querySelector<HTMLVideoElement>("#hero-native-stage video");
+    video?.dispatchEvent(new Event("timeupdate"));
+    video?.dispatchEvent(new Event("progress"));
+  });
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "intro", targetFrame: 10, displayFrame: 10 });
+  const frameBeforeRaf = current.scenes.hero.targetFrame;
+  await page.clock.runFor(200);
+  current = await snapshot(page);
+  expect(current.scenes.hero.targetFrame).toBe(frameBeforeRaf);
+  expect(current.scenes.hero.phase).toBe("intro");
+
+  await emitNativePresentation(page, 31 / 15);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "playing", targetFrame: 31, displayFrame: 31 });
+  expect(current.scenes.hero.renderer.seekCount).toBe(0);
+
+  await emitNativePresentation(page, 90 / 15);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "playing", targetFrame: 90, displayFrame: 90 });
+  expect(current.scenes.hero.renderer.seekCount).toBe(0);
+
+  // A delayed callback from an older media position cannot make the shared
+  // timeline blink backwards after a newer frame was already visible.
+  await emitNativePresentation(page, 70 / 15);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({ phase: "playing", targetFrame: 90, displayFrame: 90 });
+
+  await emitNativePresentation(page, 149 / 15);
+  current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({
+    phase: "complete",
+    targetFrame: 149,
+    displayFrame: 149,
+    playbackCompleted: true,
+  });
+  expect(current.scenes.hero.renderer).toMatchObject({
+    active: "h",
+    visible: true,
+    presentedFrame: 149,
+    seekCount: 0,
+  });
+  releaseMediaRoute();
+});
+
+test("late native callbacks are inert while hidden and after early release", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native lifecycle coverage is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+  await page.addInitScript(() => {
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function play(): Promise<void> {
+      if (this.classList.contains("hero-native-video")) return Promise.resolve();
+      return nativePlay.call(this);
+    };
+  });
+  await installPausedClock(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe("https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov");
+  await installMockNativePresentation(page);
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    video.dispatchEvent(new Event("loadeddata"));
+    video.dispatchEvent(new Event("canplay"));
+  });
+  await emitNativePresentation(page, 0);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
+    .toBe("ready");
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+  });
+  await emitNativePresentation(page, 10 / 15);
+  const hidden = await snapshot(page);
+  expect(hidden.scenes.hero).toMatchObject({ phase: "intro", targetFrame: 0, displayFrame: 0, playbackCompleted: false });
+  expect(hidden.scenes.hero.overlays.ctaAvailable).toBe(false);
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  const released = await snapshot(page);
+  expect(released.scenes.hero).toMatchObject({ phase: "released", playbackCompleted: false });
+  const releasedTarget = released.scenes.hero.targetFrame;
+  await emitNativePresentation(page, 149 / 15);
+  const late = await snapshot(page);
+  expect(late.scenes.hero).toMatchObject({
+    phase: "released",
+    targetFrame: releasedTarget,
+    playbackCompleted: false,
+  });
+  expect(late.scenes.hero.overlays.ctaAvailable).toBe(false);
+  expect(late.scenes.hero.events.some((event) => event.event === "playback-complete")).toBe(false);
+  releaseMediaRoute();
+});
+
+test("A native presentation jump to frame 149 crosses both phase boundaries only once", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native lifecycle coverage is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionVp9(page);
+  await page.addInitScript(() => {
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function play(): Promise<void> {
+      if (this.classList.contains("hero-native-video")) return Promise.resolve();
+      return nativePlay.call(this);
+    };
+    const nativeLoad = HTMLMediaElement.prototype.load;
+    HTMLMediaElement.prototype.load = function load(): void {
+      if (this.classList.contains("hero-native-video")) return;
+      nativeLoad.call(this);
+    };
+    const canvasPrototype = HTMLCanvasElement.prototype as unknown as {
+      getContext: (this: HTMLCanvasElement, contextId: unknown, ...args: unknown[]) => unknown;
+    };
+    const nativeGetContext = canvasPrototype.getContext;
+    canvasPrototype.getContext = function getContext(contextId, ...args) {
+      if (this.width === 2 && this.height === 2 && contextId === "2d") {
+        return {
+          clearRect: () => undefined,
+          drawImage: () => undefined,
+          getImageData: () => ({ data: new Uint8ClampedArray(16) }),
+        };
+      }
+      return nativeGetContext.call(this, contextId, ...args);
+    };
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+      if (url.includes("/video-prototype/hero-alpha-vp9.webm")) {
+        return Promise.resolve(new Response(new Blob(["native-test"], { type: "video/webm" }), { status: 200 }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof window.fetch;
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&heroRenderer=a&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.active, { timeout: 5_000 })
+    .toBe("a");
+  await installMockNativePresentation(page);
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    Object.defineProperty(video, "readyState", {
+      configurable: true,
+      value: HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+    video.dispatchEvent(new Event("loadeddata"));
+    video.dispatchEvent(new Event("canplay"));
+  });
+  await page.clock.runFor(10);
+  await emitNativePresentation(page, 0);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
+    .toBe("ready");
+  await emitNativePresentation(page, 149 / 15);
+  const current = await snapshot(page);
+  expect(current.scenes.hero).toMatchObject({
+    phase: "complete",
+    targetFrame: 149,
+    displayFrame: 149,
+    playbackCompleted: true,
+  });
+  const transitions = current.scenes.hero.events
+    .filter((event) => event.event === "intro-complete" || event.event === "playback-complete")
+    .map((event) => event.event);
+  expect(transitions).toEqual(["intro-complete", "playback-complete"]);
+});
+
+for (const nativeRenderer of ["h", "a"] as const) {
+  test(`${nativeRenderer.toUpperCase()} presented-frame watchdog falls back with preserved handoff`, async ({ page }, testInfo) => {
+    test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native watchdog adapter coverage is covered by the desktop Chromium project");
+    test.setTimeout(30_000);
+    await prepareLocalPage(page);
+    if (nativeRenderer === "h") await forceProductionHevc(page);
+    else await forceProductionVp9(page);
+    await page.addInitScript(() => {
+      const nativePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function play(): Promise<void> {
+        if (this.classList.contains("hero-native-video")) return Promise.resolve();
+        return nativePlay.call(this);
+      };
+      const nativeLoad = HTMLMediaElement.prototype.load;
+      HTMLMediaElement.prototype.load = function load(): void {
+        if (this.classList.contains("hero-native-video")) return;
+        nativeLoad.call(this);
+      };
+      // Keep the adapter test independent of a real native decoder. A's
+      // alpha gate still runs, but its tiny readback context is deterministic.
+      const canvasPrototype = HTMLCanvasElement.prototype as unknown as {
+        getContext: (this: HTMLCanvasElement, contextId: unknown, ...args: unknown[]) => unknown;
+      };
+      const nativeGetContext = canvasPrototype.getContext;
+      canvasPrototype.getContext = function getContext(contextId, ...args) {
+        if (this.width === 2 && this.height === 2 && contextId === "2d") {
+          return {
+            clearRect: () => undefined,
+            drawImage: () => undefined,
+            getImageData: () => ({ data: new Uint8ClampedArray(16) }),
+          };
+        }
+        return nativeGetContext.call(this, contextId, ...args);
+      };
+    });
+
+    // A normally fetches a Blob before constructing its video. Supply a
+    // deterministic in-page response; H remains a direct immutable source.
+    if (nativeRenderer === "a") {
+      await page.addInitScript(() => {
+        const nativeFetch = window.fetch.bind(window);
+        window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof Request
+              ? input.url
+              : input.toString();
+          if (url.includes("/video-prototype/hero-alpha-vp9.webm")) {
+            return Promise.resolve(new Response(new Blob(["native-test"], { type: "video/webm" }), { status: 200 }));
+          }
+          return nativeFetch(input, init);
+        }) as typeof window.fetch;
+      });
+    }
+
+    let releaseMediaRoute = (): void => undefined;
+    if (nativeRenderer === "h") {
+      const mediaPending = new Promise<void>((resolve) => {
+        releaseMediaRoute = () => resolve();
+      });
+      await page.route("https://media.curatorman.com/**", async (route) => {
+        await mediaPending;
+        await route.abort();
+      });
+    }
+    await installPausedClock(page);
+    await page.goto(`/?motionDiagnostics=1&heroRenderer=${nativeRenderer}&motionDisable=particles,contact`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect
+      .poll(async () => (await snapshot(page)).scenes.hero.renderer.active, { timeout: 5_000 })
+      .toBe(nativeRenderer);
+
+    await installMockNativePresentation(page);
+    await page.locator("#hero-native-stage video").evaluate((video) => {
+      Object.defineProperty(video, "readyState", {
+        configurable: true,
+        value: HTMLMediaElement.HAVE_CURRENT_DATA,
+      });
+      video.dispatchEvent(new Event("loadeddata"));
+      video.dispatchEvent(new Event("canplay"));
+    });
+    // Let A's isolated alpha readback and both candidates' covered-start path
+    // consume their media readiness without allowing the stall watchdog to
+    // reach its deadline.
+    await page.clock.runFor(10);
+    await emitNativePresentation(page, 0);
+    await expect
+      .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
+      .toBe("ready");
+    await emitNativePresentation(page, 70 / 15);
+    const beforeStall = await snapshot(page);
+    expect(beforeStall.scenes.hero).toMatchObject({ phase: "playing", targetFrame: 70, displayFrame: 70 });
+    expect(beforeStall.scenes.hero.renderer).toMatchObject({
+      active: nativeRenderer,
+      visible: true,
+      presentedFrame: 70,
+      nativeWatchdog: { status: "monitoring", lastPresentedFrame: 70 },
+    });
+
+    // No further rVFC is delivered. The adapter's RAF may observe the
+    // watchdog, but only the last actual presentation (70) may seed C.
+    await page.clock.runFor(1_000);
+    await expect
+      .poll(async () => (await snapshot(page)).scenes.hero.renderer.active, { timeout: 5_000 })
+      .toBe("c");
+    const fallback = await snapshot(page);
+    expect(fallback.scenes.hero.renderer.fallback).toMatchObject({
+      from: nativeRenderer,
+      to: "c",
+    });
+    expect(fallback.scenes.hero.renderer.fallback?.reason).toContain("underflow-grace-exceeded");
+    expect(fallback.scenes.hero.renderer.handoff).toMatchObject({
+      targetFrame: 70,
+      preservedFrame: 70,
+    });
+    expect(fallback.scenes.hero.targetFrame).toBeGreaterThanOrEqual(70);
+    releaseMediaRoute();
+  });
+}
 
 test("pending H navigation cancels preparation without late exposure or C startup", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native lifecycle coverage is covered by the desktop Chromium project");
@@ -1203,7 +1653,7 @@ test("late native failure hands off to C without rewinding timeline, CTA, or mob
     .toBe("ready");
   await expect
     .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 10_000 })
-    .toBe("ready");
+    .toBe("playing");
   await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
   await expect
     .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 5_000 })
@@ -1250,14 +1700,16 @@ test("late native failure hands off to C without rewinding timeline, CTA, or mob
   const handedOff = await snapshot(page);
   const handoff = handedOff.scenes.hero.events.find((event) => event.event === "renderer-handoff");
   expect(handoff).toBeDefined();
-  const handoffMatch = handoff?.reason.match(/target=(\d+(?:\.\d+)?); frame=(\d+); tolerance=(\d+)/);
+  const handoffMatch = handoff?.reason.match(/target=(\d+(?:\.\d+)?); preserved=(\d+); frame=(\d+); tolerance=(\d+)/);
   expect(handoffMatch).not.toBeNull();
   if (!handoffMatch) throw new Error("renderer handoff evidence is missing");
   const handoffTarget = Number(handoffMatch[1]);
-  const handoffFrame = Number(handoffMatch[2]);
-  const handoffTolerance = Number(handoffMatch[3]);
+  const handoffPreserved = Number(handoffMatch[2]);
+  const handoffFrame = Number(handoffMatch[3]);
+  const handoffTolerance = Number(handoffMatch[4]);
   expect(handoffTolerance).toBe(3);
-  expect(Math.abs(handoffFrame - handoffTarget)).toBeLessThanOrEqual(handoffTolerance);
+  expect(handoffTarget).toBeGreaterThanOrEqual(handoffPreserved);
+  expect(Math.abs(handoffFrame - handoffPreserved)).toBeLessThanOrEqual(handoffTolerance);
   expect(handedOff.scenes.hero.renderer).toMatchObject({ active: "c", preparation: "failed", visible: false });
   expect(["playing", "complete", "exit-hold", "released"]).toContain(handedOff.scenes.hero.phase);
   expect(handedOff.scenes.hero.targetFrame).toBeGreaterThanOrEqual(beforeHero.targetFrame);
@@ -1278,8 +1730,9 @@ test("mobile decorative work is excluded from the shared scheduler", async ({ pa
     .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
     .toBe(true);
   await page.clock.runFor(1600);
-  // The adapter keeps one shared-scheduler tick while the ready frame settles.
-  // Advance that bounded interpolation before asserting the scene is idle.
+  // The adapter keeps the shared scheduler alive through the automatic
+  // intro/playing timeline. Advance past its terminal hold before asserting
+  // that the scene is idle.
   await page.clock.runFor(2500);
   const current = await snapshot(page);
   expect(current.scenes.particles).toMatchObject({
@@ -1333,7 +1786,7 @@ test("an intro frame failure still starts playback and paints fallback copy", as
 
   await page.clock.runFor(1200);
   current = await snapshot(page);
-  expect(current.scenes.hero.phase).toBe("ready");
+  expect(current.scenes.hero.phase).toBe("playing");
   await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
   expect((await snapshot(page)).scenes.hero.phase).toBe("playing");
   await page.clock.runFor(100);
@@ -1715,7 +2168,7 @@ test("M2-M3 replace mobile copy then latch Explore work availability", async ({ 
   expect(current.scenes.hero.overlays.experienceOpacity).toBeCloseTo(0, 2);
   expect(current.elements.st1?.style).toMatchObject({ display: "block", visibility: "visible", opacity: "1" });
   expect(current.elements.st2?.style.opacity).toBe("0");
-  expect(current.scenes.hero.phase).toBe("ready");
+  expect(current.scenes.hero.phase).toBe("playing");
   await expect(page.locator("#st-reduced")).toBeHidden();
   const roleStateRect = current.elements.st1!.rect;
   const experienceStateRect = current.elements.st2!.rect;
@@ -1974,7 +2427,7 @@ test("early direct navigation releases without claiming completed terminal copy"
     .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
     .toBe(true);
   await page.clock.runFor(1_600);
-  expect((await snapshot(page)).scenes.hero.phase).toBe("ready");
+  expect((await snapshot(page)).scenes.hero.phase).toBe("playing");
 
   await page.evaluate(() =>
     document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(

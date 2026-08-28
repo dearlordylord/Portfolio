@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  advanceNativeWatchdog,
   HERO_NATIVE_H_UNDERFLOW_GRACE_MS,
   advanceNativeHWatchdog,
   initialNativeHWatchdogState,
+  initialNativeWatchdogState,
 } from "../../src/motion/hero-native-watchdog";
 
 function observation(overrides: Partial<Parameters<typeof advanceNativeHWatchdog>[1]> = {}) {
@@ -17,7 +19,24 @@ function observation(overrides: Partial<Parameters<typeof advanceNativeHWatchdog
   };
 }
 
-describe("native H progress watchdog", () => {
+describe("native presented-frame progress watchdog", () => {
+  it("uses the same presented-frame contract for A as for H", () => {
+    let state = initialNativeWatchdogState();
+    state = advanceNativeWatchdog(state, observation({ atMs: 0, presentedFrame: 0 })).state;
+    const stalled = advanceNativeWatchdog(state, observation({
+      atMs: HERO_NATIVE_H_UNDERFLOW_GRACE_MS,
+      presentedFrame: 0,
+      waiting: true,
+      stalled: true,
+    }));
+
+    expect(stalled.action).toBe("fallback");
+    expect(stalled.reason).toBe("underflow-grace-exceeded");
+    // The neutral aliases and the historical H names are the same reducer,
+    // so A and H cannot silently acquire different stall semantics.
+    expect(stalled.state.status).toBe("tripped");
+  });
+
   it("trips only after bounded silence in actual presented frames", () => {
     let state = initialNativeHWatchdogState();
     let result = advanceNativeHWatchdog(state, observation({ atMs: 0 }));

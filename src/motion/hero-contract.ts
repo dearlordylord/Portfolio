@@ -303,14 +303,11 @@ export function sampleMobileHeroCues(targetFrame: number): {
   };
 }
 
-function easeInOut(progress: number): number {
-  const t = Math.max(0, Math.min(1, progress));
-  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-}
-
 /**
  * Pure elapsed-time timeline sampling.  A renderer may sample this at any
- * refresh rate and receives the same frame at the same wall-clock time.
+ * refresh rate and receives the same frame at the same wall-clock time. The
+ * authored sequence is evenly timed, so the native media clock and C's frame
+ * selection share a linear per-segment mapping.
  */
 export function sampleHeroTimeline(
   phase: HeroPhase,
@@ -325,7 +322,7 @@ export function sampleHeroTimeline(
       progress,
       targetFrame:
         HERO_CONTRACT.startFrame +
-        easeInOut(progress) * (HERO_CONTRACT.introEndFrame - HERO_CONTRACT.startFrame),
+        progress * (HERO_CONTRACT.introEndFrame - HERO_CONTRACT.startFrame),
     };
   }
   if (phase === "playing") {
@@ -334,7 +331,7 @@ export function sampleHeroTimeline(
       progress,
       targetFrame:
         HERO_CONTRACT.introEndFrame +
-        easeInOut(progress) * (HERO_CONTRACT.endFrame - HERO_CONTRACT.introEndFrame),
+        progress * (HERO_CONTRACT.endFrame - HERO_CONTRACT.introEndFrame),
     };
   }
   if (phase === "loading") {
@@ -464,7 +461,10 @@ export function transitionHeroPhase(
     case "loading":
       return event === "assets-ready" ? "intro" : phase;
     case "intro":
-      return event === "intro-complete" ? "ready" : phase;
+      // Intro completion starts the main segment immediately. `ready` remains
+      // a valid explicit/manual phase for callers, but is never an automatic
+      // dwell checkpoint where animation waits for a gesture.
+      return event === "intro-complete" ? "playing" : phase;
     case "ready":
       return event === "advance" ? "playing" : phase;
     case "playing":

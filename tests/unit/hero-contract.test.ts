@@ -148,6 +148,11 @@ describe("mobile hero contract", () => {
     expect(samples[2]).toEqual(samples[0]);
   });
 
+  it("uses a linear authored-frame clock at every point in each segment", () => {
+    expect(sampleHeroTimeline("intro", 350).targetFrame).toBeCloseTo(7.75, 10);
+    expect(sampleHeroTimeline("playing", 875).targetFrame).toBeCloseTo(60.5, 10);
+  });
+
   it("uses elapsed-delta exponential smoothing with equivalent cadence", () => {
     expect(smoothHeroFrame(0, 100, 1000 / 60)).toBeCloseTo(7, 12);
 
@@ -245,7 +250,7 @@ describe("mobile hero contract", () => {
 
   it.each([
     ["loading", "assets-ready", "intro"],
-    ["intro", "intro-complete", "ready"],
+    ["intro", "intro-complete", "playing"],
     ["ready", "advance", "playing"],
     ["playing", "playback-complete", "complete"],
     ["complete", "request-exit", "exit-hold"],

@@ -220,20 +220,26 @@ Production chooses H (direct DOM HEVC alpha) only for the qualified iPhone
 Safari profile, A (direct DOM VP9 alpha) for a qualified non-Safari browser, and
 C (the bounded WebP sequence) otherwise. H assigns its immutable R2 URL
 directly to a DOM video; A is still fetched into a Blob. Both native candidates
-are shown only after the hidden candidate is ready, and currently observe
+keep a compositor-active video under a poster/solid cover until the candidate
+has produced a first presented-frame proof, and currently observe
 `loadedmetadata`/`loadeddata`/`canplay`/`playing`/`timeupdate`/`error` plus
-`requestVideoFrameCallback()`'s `mediaTime`. Accepted H additionally arms a
-750 ms no-forward-presented-frame guard during intro/playing; it records
-`waiting`/`stalled`, suppresses corrective seeks/repeated play attempts during
-that grace window, and then uses the existing frame-preserving H→C handoff.
+`requestVideoFrameCallback()`'s `mediaTime`. Accepted A/H candidates arm a
+750 ms no-forward-presented-frame guard during intro/playing; both record
+`waiting`/`stalled`, suppress corrective seeks/repeated play attempts during
+that grace window, and then use the existing frame-preserving native→C handoff.
 C exposes target, display, and rendered frames plus image readiness counts.
-Those fields are useful, but there is no event history or media-buffer state,
-so a single snapshot cannot establish why progress stopped.
+Diagnostics also record native seek commands, the last presented frame, and
+native→C handoff `target`/`preserved`/`rendered` frames. Those fields are useful,
+and the bounded event tape records state transitions, but media-buffer state is
+still not exposed, so a single snapshot cannot establish why progress stopped.
 
-The shared contract makes the likely false positive explicit: frame **31** is
-the end of the automatic intro (`1,400 ms`) and the `ready` checkpoint. The
-hero is expected to pause there until the next downward gesture. Frame **149**
-is the terminal frame after the 3,500 ms playing phase;
+The shared contract makes the phase boundary explicit: frame **31** is the end
+of the automatic intro (`1,400 ms`) and the start of the continuous `playing`
+segment. There is no automatic `ready` dwell or pointer-controlled plateau.
+Mobile downward input remains consumed until frame **58**, where the
+experience copy replaces UX/UI; after that threshold the next downward gesture
+is native page scrolling. Frame **149** is the terminal frame after the 3,500
+ms playing phase;
 `complete`/`playbackCompleted` and a terminal presented/rendered frame are
 the success condition. The observer must label those states rather than calling
 either one a stall.
@@ -259,8 +265,11 @@ enable it only behind the existing diagnostics gate. `timeupdate` is not a
 frame proof: the HTML Standard rate-limits it, whereas
 `requestVideoFrameCallback` reports a frame sent for composition. Its
 `mediaTime` is the presented frame's media timestamp, and `presentedFrames`
-can reveal missed frames; the API is best-effort and may be one v-sync late, so
-it is evidence, not a replacement for the app's target state. ([WHATWG
+can reveal missed frames; the API is best-effort and may be one v-sync late.
+For native A/H, that media timestamp is the sole clock input for target frame,
+phase progress, and cue boundaries; for C, the shared RAF timeline remains the
+clock. In both cases it is evidence from the renderer, not a corrective seek
+target. ([WHATWG
 media](https://html.spec.whatwg.org/multipage/media.html),
 [requestVideoFrameCallback proposal](https://wicg.github.io/video-rvfc/))
 
@@ -276,12 +285,12 @@ events](https://html.spec.whatwg.org/multipage/media.html#network-states),
 [HTML ready states](https://html.spec.whatwg.org/multipage/media.html#ready-states),
 [HTML buffered ranges](https://html.spec.whatwg.org/multipage/media.html#dom-media-buffered))
 
-For H, record candidate preparation start/end, the media element's
+For A/H, record candidate preparation start/end, the media element's
 `networkState`/ready-state transitions, request timing from the device network
 trace, the four-second preparation deadline/fallback event, and the bounded
 post-readiness underflow guard (presented-frame progress, `waiting`/`stalled`,
-and H→C handoff). For A, retain the existing fetch response status and Blob-byte
-observations as well. C needs per-frame load start/end/failure times in addition
+and native→C handoff). For A, retain the existing fetch response status and
+Blob-byte observations as well. C needs per-frame load start/end/failure times in addition
 to its existing queue counts.
 
 ## Deterministic classification
@@ -291,7 +300,7 @@ exclusive outcomes, with the first matching reason retained:
 
 | Outcome | Required evidence |
 | --- | --- |
-| `intentional-intro-checkpoint` | `phase=ready`, an `intro-complete` transition, frame 31 (within one frame), no `playbackCompleted`; this is expected waiting for input. |
+| `automatic-intro-boundary` | `phase=playing`, an `intro-complete` transition, frame 31 (within one frame), no `playbackCompleted`; the main segment must continue without input. |
 | `slow-preparation` | H/A remains `preparation=hidden` while `phase=loading`, then records its deadline/delivery failure and falls to C; no native surface was exposed before that decision. |
 | `playback-underflow` | `phase=intro` or `playing`, motion expected, `paused=false`, not seeking/hidden/ended, and a `waiting` or corroborating `stalled` state with no presented-frame advance for at least three 15-fps frame periods (~200 ms). `buffered` ending at/near current time supports the diagnosis; an isolated `stalled` event does not prove visible interruption. |
 | `permanent-stop-before-terminal` | `phase=playing` and not complete, while the presented frame (H/A) or rendered frame (C) remains unchanged for a bounded recovery window (suggested 1,000 ms), or `pause`/`ended` occurs below frame 149 without an app transition. Exclude visibility changes, an explicit pause, a pending seek, and a C frame still loading; those are separate causes. |
