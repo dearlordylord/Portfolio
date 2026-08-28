@@ -1,13 +1,27 @@
-# HEVC-with-alpha import gate (prototype)
+# HEVC-with-alpha production asset and release gate
 
-The H variant is intentionally a candidate, not yet the production-selected
-codec path. A normal HEVC encoder produces an opaque stream; it is not a
+H is the production Safari branch for the exact, user-confirmed iPhone Safari
+profile. A normal HEVC encoder produces an opaque stream; it is not a
 substitute for Apple’s paired auxiliary alpha layer. The repository therefore
 includes a macOS/Xcode-only AVFoundation authoring command and checks in the
-exact validated candidate plus manifest under `public/video-prototype/` so a
-clean clone and staging build test the same bytes. The canonical candidate is
-deliberately distinct from the earlier reduced asset:
+exact validated HQ asset plus manifest under `public/video-prototype/` so a
+clean clone and staging build test the same bytes. The canonical asset is
 `hero-hevc-alpha-hq-v1`.
+
+The browser gate in [`src/motion/hevc-alpha.ts`](../src/motion/hevc-alpha.ts)
+requires all of the following before H is requested or exposed:
+
+- Apple’s native iPhone Safari profile at or above the conservative iOS 17
+  evidence floor (Chromium/Firefox/iOS browser shells are excluded even when
+  they advertise the codec). The floor limits automatic H selection to the
+  versions represented by the user-confirmed evidence; it is not a general
+  claim that older Safari releases cannot decode HEVC alpha;
+- `canPlayType()` as a decoder candidate signal, never as alpha evidence;
+- the checked-in source URL, asset ID, and SHA-256 for the HQ MOV; and
+- the recorded user-confirmed real iPhone Safari evidence for that same asset.
+
+Every failed or unqualified result goes to C. The H element remains a direct
+DOM layer; it is never uploaded to WebGL or read back through a canvas.
 
 ## One-command Apple export
 
@@ -21,12 +35,14 @@ git archive ed50e2b -- Кадры | tar -x -C motion-artifacts/hevc-alpha-source
 
 The encoder rejects any other byte count or ordered source-set hash.
 
-The current AVFoundation-validated candidate is
+The current AVFoundation-validated production asset is
 `hero-hevc-alpha-hq.mov` (11,151,391 bytes), SHA-256
 `54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c`.
 It reports `hvc1`, `containsAlphaChannel=true`, 150 samples at 15 fps,
 decoded content alpha `0...255`, and 1280×720 source/coded geometry. This is
-authoring evidence, not yet Safari promotion evidence.
+the checked-in authoring evidence bound by the runtime asset gate; real-device
+Safari behavior remains an explicit qualification assumption recorded in
+source and should be rechecked when the asset, browser, or device changes.
 
 On macOS with Xcode selected (`xcode-select --install` is not enough without
 the Xcode SDK), run the dry-run first:
@@ -93,8 +109,9 @@ instructions. The completed authoring handoff is:
    AVFoundation facts.
 3. Run `npm run build`, `npm run verify:dist`, and verify the distributed MOV
    retains the manifest byte count and SHA-256.
-4. Record the supported Safari/iOS matrix before enabling H without the manual
-   prototype override. The query parameter remains untrusted test input.
+4. Keep the supported Safari/iOS matrix current. The production page has no
+   renderer query override; the retained architecture page may still use its
+   untrusted override for draft failure-injection tests only.
 
 The Linux-testable `src/motion/hevc-encoder-config.ts` validator checks the
 sidecar shape and fixed source/output contract. It intentionally cannot certify
@@ -132,48 +149,44 @@ rendering form). The resulting QuickTime MOV must satisfy Apple’s
 - a valid base/alpha frame pair for every presentation timestamp.
 
 Validate the export in Apple’s AVFoundation/QuickTime playback before using it
-on the web. Keep the file at a same-origin URL (or pass a same-origin
-`hevcSrc=/path/file.mov` plus matching `hevcAssetId=asset-id` query override in
-this prototype). The H renderer
-downloads a Blob in the prototype because Pages currently answers static
-video range requests with `200`; the Blob gives the hidden candidate a local
-seekable timeline.
+on the web. Keep the file at the checked-in same-origin URL. The retained
+architecture page may accept a `hevcSrc=/path/file.mov` plus matching
+`hevcAssetId=asset-id` query override for draft tests; the production page does
+not. H downloads a Blob because Pages currently answers static video range
+requests with `200`; the Blob gives the hidden candidate a local seekable
+timeline.
 
 The H DOM element is laid out in the existing definite-size hero stage with
-`object-fit: cover`; its intrinsic coded height therefore does not size the
-stage. The HQ diagnostic resolution reports `1280×720 content · coded
-1280×720`, and the visible artwork contract uses `aspect-ratio: 1280 / 720`.
-C's canvas remains the independent reduced source contract until the runtime
-promotion decision is made.
+`object-fit: fill`; its intrinsic coded height therefore does not size the
+stage. The HQ asset is `1280×720`, while the visible artwork is fitted to the
+existing `900×507` source-content rectangle so H and C occupy the same layout
+box. C remains the deterministic frame-addressable fallback.
 
 ## Runtime gate
 
-H measures `canPlayType()` only as an initial decoder claim. In this throwaway
-prototype it accepts an untrusted manual asset/device evidence override (for
-example `asset:hero-hevc-alpha-hq-v1|device:macos-safari`) plus the matching
-`hevcAssetId` before it requests the candidate at all. The query token is not
-production trust: shipping H requires a checked-in manifest that binds an
-immutable asset URL and hash to the real-device alpha evidence.
-Once qualified, it keeps the direct-DOM video hidden while seekable delivery is
-prepared and shows only one lightweight static WebP frame-0 poster; it does not
-start C's frame scheduler during this runway. The prototype uses a measured
-15,000 ms preparation deadline (`HEVC_PREPARATION_DEADLINE_MS`) for this manual
-device test. Cloudflare Pages currently answers the staged MOV with `200`
-instead of a verified byte-range response, so the prototype must prepare the
-11.2 MB file as a locally seekable Blob behind frame 0. At the deadline it
-aborts the Blob request and falls back to C, so a stalled candidate cannot leave
-the hero blank indefinitely. Production should move the qualified MOV to a
-range-capable media origin instead of extending this deadline. The gate opens
-only after capability,
-qualification, delivery, and `loadeddata`/`canplay` readiness all pass. A
-missing asset, unsupported codec, missing/failed qualification, media error, or
-non-seekable URL falls back to C before the base layer is visible. H is never
-uploaded to WebGL or reconstructed through a matte shader.
+H measures `canPlayType()` only as an initial decoder claim. Production also
+requires the exact Apple iPhone Safari profile with an iOS major version of at
+least 17, the checked-in HQ asset/hash, and the user-confirmed real-device evidence recorded in
+`HEVC_ALPHA_PRODUCTION_EVIDENCE`; none of those facts can be supplied by a
+public query parameter. Once qualified, it keeps the direct-DOM video hidden
+while delivery is prepared and shows only one static WebP frame-0 poster; it
+does not start C's frame scheduler during this runway. Cloudflare Pages
+currently answers the staged MOV with `200` instead of a verified byte-range
+response, so H prepares the 11.2 MB file as a locally seekable Blob behind
+frame 0. The shared `HEVC_PREPARATION_DEADLINE_MS` is 4,000 ms: at the deadline
+the request is aborted and H fails open to C, avoiding an indefinite blank
+hero or input lock. Full Blob SHA-256 verification is a deliberate temporary
+trade-off until range-capable delivery is available; range delivery is not
+part of this change. The gate opens only after capability, qualification,
+delivery, and `loadeddata`/`canplay` readiness all pass. A missing asset,
+unsupported/unqualified profile, media error, or stalled delivery falls back
+to C before an opaque base layer is visible. H is never uploaded to WebGL or
+reconstructed through a matte shader.
 
-The candidate MOV and its AVFoundation manifest are checked in together, so a
-clean clone produces the same H-capable staging build. The runtime still
-requires explicit manual device qualification until real-device evidence is
-recorded; repository presence alone does not promote H to production.
+The MOV and its AVFoundation manifest are checked in together, so a clean
+clone produces the same H-capable build. Repository presence alone does not
+prove alpha behavior: the exact asset-bound user evidence and the runtime
+profile gate are both required.
 
 Do not draw HEVC-with-alpha into canvas to “prove” transparency. WebKit bug
 [273006](https://bugs.webkit.org/show_bug.cgi?format=multiple&id=273006) shows
@@ -182,12 +195,11 @@ upload; canvas readback would therefore be a false negative for the path we
 intend to ship. Alpha/edge proof belongs to the external real-device evidence
 recorded in the release gate.
 
-The release gate remains manual: macOS Safari and iOS Safari edge screenshots,
-autoplay/resume, scrub checkpoints, reduced motion, seekable delivery, and
-opaque-fallback evidence all must be recorded on representative devices.
-`metric-real-device-gate` therefore stays `manual gate` until that evidence is
-provided; a headless browser or a codec support string cannot turn it into a
-release pass.
+The broader release matrix remains manual: macOS Safari and additional iOS
+Safari edge screenshots, autoplay/resume, scrub checkpoints, reduced motion,
+seekable delivery, and opaque-fallback evidence should be recorded whenever
+the asset or support floor changes. A headless browser or a codec support
+string cannot turn that matrix into a release pass.
 
 The prototype diagnostics also keep C's decoded-cache occupancy separate from
 its transfer estimate. The transfer estimate is based on unique successfully

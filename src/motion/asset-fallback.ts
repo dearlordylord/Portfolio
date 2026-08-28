@@ -351,10 +351,15 @@ export class AssetReadinessRegistry {
     this.markFailed(key, failure);
   }
 
-  selectNearestReadyFrame(requestedFrame: number): FrameSelection {
+  selectNearestReadyFrame(
+    requestedFrame: number,
+    availableKeys?: ReadonlySet<string>,
+  ): FrameSelection {
     const candidates = this.#expectations
       .filter((asset): asset is NormalizedExpectation & { frame: number } =>
-        asset.frame !== undefined && this.#records.get(asset.key)?.status === "ready",
+        asset.frame !== undefined
+        && this.#records.get(asset.key)?.status === "ready"
+        && (availableKeys === undefined || availableKeys.has(asset.key)),
       )
       .map((asset) => ({ frame: asset.frame, key: asset.key }));
     const selection = selectNearestReadyFrame(requestedFrame, candidates);
@@ -364,8 +369,8 @@ export class AssetReadinessRegistry {
   }
 
   /** Short alias for renderers that already know they are selecting a frame. */
-  selectFrame(requestedFrame: number): FrameSelection {
-    return this.selectNearestReadyFrame(requestedFrame);
+  selectFrame(requestedFrame: number, availableKeys?: ReadonlySet<string>): FrameSelection {
+    return this.selectNearestReadyFrame(requestedFrame, availableKeys);
   }
 
   diagnostics(): AssetReadinessDiagnostics {

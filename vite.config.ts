@@ -1,9 +1,14 @@
-import { cp } from "node:fs/promises";
+import { cp, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { defineConfig, type Plugin } from "vite";
 
 const RUNTIME_ASSET_DIRECTORIES = ["Кадры", "icon", "Проекты"] as const;
+const PRODUCTION_EXCLUDED_OUTPUTS = [
+  "prototype-video.html",
+  "video-prototype/hero-color-matte.mp4",
+  "video-prototype/hq-hero-color-matte.mp4",
+] as const;
 
 /**
  * These assets are addressed by runtime manifests/frame numbers, so Vite's
@@ -24,6 +29,15 @@ function copyRuntimeAssets(): Plugin {
           }),
         ),
       );
+      // `public/` is also copied by Vite, while the packed B files and the
+      // architecture-study page remain tracked draft inputs. Remove only the
+      // known draft outputs from this production bundle; never delete source
+      // files or other user assets.
+      await Promise.all(
+        PRODUCTION_EXCLUDED_OUTPUTS.map((relative) =>
+          rm(path.join(outputDirectory, relative), { force: true }),
+        ),
+      );
     },
   };
 }
@@ -31,12 +45,11 @@ function copyRuntimeAssets(): Plugin {
 export default defineConfig({
   plugins: [copyRuntimeAssets()],
   build: {
-    // Keep the architecture study as a directly addressable static page in
-    // preview/dist; it never replaces the production portfolio entrypoint.
+    // Production emits only the real portfolio. The architecture study stays
+    // in source for future investigation but is not shipped as a public page.
     rollupOptions: {
       input: {
         main: path.resolve("index.html"),
-        videoPrototype: path.resolve("prototype-video.html"),
       },
     },
   },

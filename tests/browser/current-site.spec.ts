@@ -62,6 +62,18 @@ type DiagnosticsSnapshot = {
           naturalHeight: number;
         } | null;
       };
+      renderer: {
+        requested: "h" | "a" | "c";
+        active: "h" | "a" | "c";
+        selection: "automatic" | "forced";
+        presentedFrame: number | null;
+        visible: boolean;
+        preparation: "idle" | "hidden" | "ready" | "failed";
+        fallback: { from: "h" | "a" | "c"; to: "c"; reason: string } | null;
+        source: string | null;
+        assetId: string | null;
+      };
+      events: Array<{ timeMs: number; from: string; event: string; to: string; reason: string }>;
     };
     particles: {
       active: boolean;
@@ -164,6 +176,25 @@ async function installPausedClock(page: Page): Promise<void> {
   // the two protocol calls. No application is loaded yet, so advancing to a
   // fixed safe epoch pauses deterministically without advancing app work.
   await page.clock.pauseAt(60_000);
+}
+
+async function forceProductionVp9(page: Page): Promise<void> {
+  // The production page keeps renderer selection automatic for ordinary
+  // visits. This loopback-only test seam selects A while retaining the real
+  // media element, Blob fetch, alpha probe, and playback lifecycle.
+  await page.addInitScript(() => {
+    const nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function canPlayType(type: string): CanPlayTypeResult {
+      if (type.includes("vp09")) return "probably";
+      return nativeCanPlayType.call(this, type);
+    };
+  });
+}
+
+async function dispatchNativeMediaError(page: Page): Promise<void> {
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    video.dispatchEvent(new Event("error"));
+  });
 }
 
 function writeBaseline(projectName: string, name: string, body: Buffer | string): void {
@@ -463,7 +494,7 @@ test("mobile hero converges after a transient short viewport", async ({ page }, 
   );
 });
 
-test("mobile hero prioritizes intro requests before bounded later loading", async ({ page }, testInfo) => {
+test("mobile hero gates on intro requests before demand-driven later loading", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Progressive hero loading is covered by the mobile project");
   test.slow();
   await prepareLocalPage(page);
@@ -511,9 +542,14 @@ test("mobile hero prioritizes intro requests before bounded later loading", asyn
     .toBe(32);
   const ready = await snapshot(page);
   expect(ready.scenes.hero.assets.laterQueueStarted).toBe(true);
-  expect(ready.scenes.hero.assets.requested).toBeGreaterThanOrEqual(36);
+  // Entering the ready phase enables later-frame requests, but it must not
+  // eagerly drain the 118-frame tail. The first later request is made only
+  // after a target moves into that neighborhood.
+  expect(ready.scenes.hero.assets.requested).toBe(32);
+  expect(ready.scenes.hero.assets.loaded).toBe(32);
+  expect(ready.scenes.hero.assets.allReady).toBe(false);
   expect(requestedFrames.slice(0, 32).every((frame) => frame <= 31)).toBe(true);
-  expect(requestedFrames.slice(32, 36).every((frame) => frame >= 32)).toBe(true);
+  expect(requestedFrames.length).toBe(32);
 });
 
 test("mobile hero bounds the input lock while a partial intro remains loading", async ({ page }, testInfo) => {
@@ -720,10 +756,16 @@ test("production runtime assets are served without hero degradation", async ({ p
   await prepareLocalPage(page);
   await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", { waitUntil: "domcontentloaded" });
   await expect
-    .poll(async () => (await snapshot(page)).scenes.hero.assets.allReady, { timeout: 30_000 })
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 30_000 })
     .toBe(true);
   const hero = (await snapshot(page)).scenes.hero;
-  expect(hero.assets).toMatchObject({ expected: 150, loaded: 150, degraded: false });
+  expect(hero.assets).toMatchObject({ expected: 150, introReady: true, degraded: false, allReady: false });
+  // Asset availability is checked below with direct requests. Runtime
+  // loading is intentionally bounded: the registry may report the intro and
+  // a small demand neighborhood, but must not claim that every decoded frame
+  // is resident or eagerly loaded.
+  expect(hero.assets.loaded).toBeLessThan(150);
+  expect(hero.assets.pending).toBeGreaterThan(0);
   expect(hero.assets.failedAssets).toEqual([]);
 
   for (const path of [
@@ -736,6 +778,140 @@ test("production runtime assets are served without hero degradation", async ({ p
     expect(response.ok(), `${path} should be present in the deployable output`).toBe(true);
     expect((await response.body()).byteLength).toBeGreaterThan(0);
   }
+});
+
+test("production A becomes visible only after decoded alpha readiness and reports presented progress", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium"), "VP9 alpha playback coverage belongs to Chromium projects");
+  test.setTimeout(60_000);
+  await prepareLocalPage(page);
+  await forceProductionVp9(page);
+  await page.goto("/?motionDiagnostics=1&heroRenderer=a&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.requested, { timeout: 5_000 })
+    .toBe("a");
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 30_000 })
+    .toBe("ready");
+
+  let current = await snapshot(page);
+  expect(current.scenes.hero.renderer).toMatchObject({
+    requested: "a",
+    active: "a",
+    selection: "forced",
+    preparation: "ready",
+    visible: true,
+    source: "/video-prototype/hero-alpha-vp9.webm",
+    assetId: "hero-alpha-vp9-v1",
+  });
+  expect(current.scenes.hero.renderer.presentedFrame).not.toBeNull();
+  expect(current.scenes.hero.renderer.presentedFrame!).toBeGreaterThanOrEqual(0);
+  expect(current.scenes.hero.events.some((event) => event.event === "renderer-ready" && event.to === "a")).toBe(true);
+  await expect(page.locator("#hero-native-stage video")).toHaveCSS("visibility", "visible");
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 10_000 })
+    .toBe("ready");
+  current = await snapshot(page);
+  expect(current.scenes.hero.renderer.active).toBe("a");
+  expect(Math.abs(
+    (current.scenes.hero.renderer.presentedFrame ?? current.scenes.hero.targetFrame) - current.scenes.hero.targetFrame,
+  )).toBeLessThanOrEqual(3);
+
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 5_000 })
+    .toBe("playing");
+  const playingStart = await snapshot(page);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.presentedFrame, { timeout: 5_000 })
+    .toBeGreaterThan(playingStart.scenes.hero.renderer.presentedFrame ?? 31);
+  current = await snapshot(page);
+  expect(current.scenes.hero.renderer).toMatchObject({ active: "a", preparation: "ready", visible: true });
+  expect(current.scenes.hero.renderer.presentedFrame, JSON.stringify(current.scenes.hero)).toBeGreaterThan(31);
+  expect(current.scenes.hero.renderer.presentedFrame).toBeLessThanOrEqual(current.scenes.hero.targetFrame + 3);
+});
+
+test("late native failure hands off to C without rewinding timeline, CTA, or mobile input", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-mobile"), "Late mobile renderer handoff is covered by the Chromium mobile project");
+  test.setTimeout(60_000);
+  await prepareLocalPage(page);
+  await forceProductionVp9(page);
+  await page.goto("/?motionDiagnostics=1&heroRenderer=a&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 30_000 })
+    .toBe("ready");
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 10_000 })
+    .toBe("ready");
+  await page.evaluate(() => window.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, cancelable: true })));
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 5_000 })
+    .toBe("playing");
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.targetFrame, { timeout: 5_000 })
+    .toBeGreaterThan(65);
+
+  const beforeFailure = await snapshot(page);
+  const beforeHero = beforeFailure.scenes.hero;
+  expect(beforeHero.phase, JSON.stringify(beforeHero)).toBe("playing");
+  const beforeWheel = await page.evaluate(() => {
+    const event = new WheelEvent("wheel", { deltaY: 1, cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(beforeWheel, JSON.stringify(beforeHero)).toBe(false);
+
+  await dispatchNativeMediaError(page);
+  const afterFailure = await snapshot(page);
+  const afterHero = afterFailure.scenes.hero;
+  expect(afterHero.renderer).toMatchObject({ active: "c", preparation: "failed", fallback: expect.objectContaining({ from: "a", to: "c" }) });
+  // The late path changes only the renderer. These values are the state that
+  // owns scroll choreography and CTA latching, so an equality assertion here
+  // catches the old frame-0/restarted-loading regression synchronously.
+  expect(["playing", "complete", "exit-hold", "released"]).toContain(afterHero.phase);
+  expect(afterHero.targetFrame).toBeGreaterThanOrEqual(beforeHero.targetFrame);
+  expect(afterHero.displayFrame).toBeGreaterThanOrEqual(beforeHero.displayFrame);
+  expect(Number(afterHero.playbackCompleted)).toBeGreaterThanOrEqual(Number(beforeHero.playbackCompleted));
+  expect(Number(afterHero.overlays.ctaAvailable)).toBeGreaterThanOrEqual(Number(beforeHero.overlays.ctaAvailable));
+  expect(afterHero.readinessWatchdogPending).toBe(false);
+  expect(afterHero.renderer.visible).toBe(true);
+
+  const afterWheel = await page.evaluate(() => {
+    const event = new WheelEvent("wheel", { deltaY: 1, cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(afterWheel).toBe(false);
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.events.some((event) => event.event === "renderer-handoff"), { timeout: 30_000 })
+    .toBe(true);
+  const handedOff = await snapshot(page);
+  const handoff = handedOff.scenes.hero.events.find((event) => event.event === "renderer-handoff");
+  expect(handoff).toBeDefined();
+  const handoffMatch = handoff?.reason.match(/target=(\d+(?:\.\d+)?); frame=(\d+); tolerance=(\d+)/);
+  expect(handoffMatch).not.toBeNull();
+  if (!handoffMatch) throw new Error("renderer handoff evidence is missing");
+  const handoffTarget = Number(handoffMatch[1]);
+  const handoffFrame = Number(handoffMatch[2]);
+  const handoffTolerance = Number(handoffMatch[3]);
+  expect(handoffTolerance).toBe(3);
+  expect(Math.abs(handoffFrame - handoffTarget)).toBeLessThanOrEqual(handoffTolerance);
+  expect(handedOff.scenes.hero.renderer).toMatchObject({ active: "c", preparation: "failed", visible: false });
+  expect(["playing", "complete", "exit-hold", "released"]).toContain(handedOff.scenes.hero.phase);
+  expect(handedOff.scenes.hero.targetFrame).toBeGreaterThanOrEqual(beforeHero.targetFrame);
+  expect(handedOff.scenes.hero.playbackCompleted).toBe(beforeHero.playbackCompleted);
+  expect(Number(handedOff.scenes.hero.overlays.ctaAvailable))
+    .toBeGreaterThanOrEqual(Number(beforeHero.overlays.ctaAvailable));
+  expect(handedOff.scenes.hero.assets.lastFrameSelection?.renderedFrame).not.toBeNull();
+  expect(handedOff.scenes.hero.assets.lastFrameSelection?.renderedFrame ?? 0)
+    .toBeGreaterThanOrEqual(Math.floor(beforeHero.displayFrame) - handoffTolerance);
 });
 
 test("mobile decorative work is excluded from the shared scheduler", async ({ page }, testInfo) => {

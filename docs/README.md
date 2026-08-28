@@ -1,12 +1,33 @@
 # Motion and responsive-layout index
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 This is the canonical project note for motion work. Load this file before changing animation timing, responsive geometry, canvas behavior, or mobile input. Historical research was removed after its durable conclusions moved into the implementation and tests.
 
-## Active temporary research
+## Current media decision
 
-- [Transparent, scrub-driven hero media research](./transparent-video-hero-research.md) — current cross-browser alpha/video decision note. It preserves the correctness-first WebP sequence, direct-DOM Safari HEVC-with-alpha, Chromium VP9A, and a bounded packed-matte salvage experiment as separate options. Delete this note after the selected architecture and its real-device gates have moved into source/tests and the prototype branch has been promoted or rejected.
+- Production uses **H → A → C**: checked-in HEVC-with-alpha in a direct DOM
+  video for the exact, user-confirmed iPhone Safari profile; VP9-alpha in a
+  direct DOM video for qualified non-Safari browsers; and the bounded WebP
+  sequence as the universal deterministic fallback.
+- H is selected only after the pure gate in
+  [`src/motion/hevc-alpha.ts`](../src/motion/hevc-alpha.ts) confirms the Apple
+  iPhone Safari profile at or above the conservative iOS 17 evidence floor,
+  the checked-in HQ asset ID/SHA-256, and the recorded real-device evidence.
+  `canPlayType()` is never sufficient by itself. The version floor is an
+  evidence boundary, not a general statement about older Safari decoders.
+- H uses a full 11.2 MB Blob and a 4-second fail-open deadline while Pages
+  range delivery is unverified. This is an explicit temporary delivery
+  trade-off; range-capable hosting is planned separately and is not part of
+  this change.
+- The packed H.264 + matte/WebGL route (B) and `prototype-video.html` remain
+  draft-only source material. Vite removes them from production output, and
+  `npm run verify:dist` rejects any leaked B asset or debug page.
+
+The detailed [transparent hero media research](./transparent-video-hero-research.md)
+is retained as a short-lived reference while the draft alternatives remain in
+the repository. Delete or archive it after the next media-delivery decision;
+the selected behavior and its gates now live in source and tests.
 
 ## Product contracts
 
@@ -22,7 +43,7 @@ This is the canonical project note for motion work. Load this file before changi
 - `src/browser/` contains shallow DOM/canvas adapters and one `main.ts` entry. `index.html` contains structure and styles, not animation implementations.
 - One lifecycle scheduler owns animation frames, visibility, reduced motion, scene activation, and runnable-work metrics. Scenes do not self-schedule.
 - Hero frames and skill icons have pending/ready/failed state, named failures, deterministic fallback, and degraded diagnostics.
-- The video prototype keeps C’s decoded WebP neighborhood bounded with an explicit target → displayed → rendered coordinator. Its H Safari HEVC-with-alpha candidate is direct-DOM-only and requires an asset-bound manual evidence override before it can request or reveal media; that query override is not production trust, so H remains non-production until a checked-in asset/hash/device manifest exists. Otherwise it falls back to C. See [HEVC alpha import gate](./hevc-alpha-import.md).
+- The production hero keeps C’s decoded WebP neighborhood bounded with an explicit target → displayed → rendered coordinator. Its H Safari HEVC-with-alpha branch is direct-DOM-only and requires the checked-in HQ asset/hash plus user-confirmed iPhone Safari evidence before it can request or reveal media. A uses direct-DOM VP9 alpha only after its decoded-alpha proof. Unsupported, unqualified, failed, or slow native candidates fall directly to C. See [HEVC alpha import and release gate](./hevc-alpha-import.md).
 - Skills and particles use seeded fixed-step simulations. Mobile particles are disabled; desktop neighbor work is bounded rather than all-pairs.
 - Reduced motion exposes essential content immediately and schedules no decorative work.
 - Diagnostics require both a loopback host and `?motionDiagnostics=1`. `motionDisable=hero,particles,skills,timeline,contact` isolates named scenes for tests.
@@ -34,9 +55,16 @@ Run:
 ```sh
 npm run check
 npm run test:browser
+npm run test:browser:prototype # optional draft-only media comparison
 ```
 
 `npm run check` performs strict type checking, unit/property tests, a production build, and an exact runtime-asset inventory/size check. The browser suite builds and previews `dist` rather than using Vite's source-serving development mode, so missing deployment assets fail before release. It covers Chromium mobile and desktop scenarios for M1–M4, scheduler lifecycle, reduced motion, asset degradation, breakpoint changes, native scrolling, diagnostics isolation, narrow-width containment, and the case dialog.
+
+The optional prototype suite is intentionally separate: it uses Vite's
+source-serving development mode and targets only
+`tests/browser/video-prototype.spec.ts`. The production suite ignores that
+spec because `prototype-video.html` is a tracked draft and is deliberately
+absent from `dist`.
 
 Mobile WebKit is configured as an opt-in project, but this workstation lacks its required host libraries. Run `npm run test:browser:webkit` in CI or on a host with those libraries before release. Headless Chromium evidence is not a substitute for final real-device performance and visual review.
 

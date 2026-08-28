@@ -37,6 +37,20 @@ describe("bounded decoded-frame cache", () => {
     cache.clear();
     expect(disposed).toEqual([["old", 4], ["new", 4], ["eight", 8]]);
   });
+
+  it("allows an evicted frame to be decoded again without exceeding capacity", () => {
+    const disposed: Array<[string, number]> = [];
+    const cache = new BoundedFrameCache<string>(2, (value, frame) => disposed.push([value, frame]));
+    cache.set(0, "first");
+    cache.set(1, "second");
+    cache.set(2, "third");
+
+    // The renderer can reload frame 0 after its decoded resource is disposed.
+    cache.set(0, "first-reloaded");
+    expect(cache.snapshot()).toMatchObject({ capacity: 2, size: 2, frames: [2, 0], evictions: 2 });
+    expect(disposed).toEqual([["first", 0], ["second", 1]]);
+    expect(cache.get(0)).toBe("first-reloaded");
+  });
 });
 
 describe("unique sequence transfer accounting", () => {

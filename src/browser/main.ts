@@ -1,6 +1,7 @@
 import { mountCaseOverlay } from "./case-overlay";
 import { setupMotionDiagnostics } from "./diagnostics";
 import { mountHeroScene } from "./hero-scene";
+import type { ProductionHeroRendererPreference } from "../motion/hero-renderer";
 import {
   isMotionDisabled,
   motionScheduler,
@@ -22,11 +23,28 @@ const unregisterVisualInspection = registerVisualInspection(motionDiagnostics);
 
 const reducedMotionLifecycle = onReducedMotionChange;
 
+// Existing diagnostics scenarios are C fixtures unless a test explicitly
+// opts into the native ladder. Normal URLs have no renderer selector and use
+// the production H → A → C capability path. The query override is loopback
+// diagnostics-only; it is not an asset qualification mechanism.
+const heroRendererPreference: ProductionHeroRendererPreference = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const hostname = window.location.hostname.toLowerCase();
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  if (params.has("motionDiagnostics") && loopback) {
+    const requested = params.get("heroRenderer");
+    if (requested === "h" || requested === "a" || requested === "c" || requested === "auto") return requested;
+    return "c";
+  }
+  return "auto";
+})();
+
 const heroScene = mountHeroScene({
   scheduler: motionScheduler,
   diagnostics: motionDiagnostics,
   onReducedMotionChange: reducedMotionLifecycle,
   disabled: isMotionDisabled("hero"),
+  rendererPreference: heroRendererPreference,
 });
 
 const particleScene = mountParticleScene({

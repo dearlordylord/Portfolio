@@ -207,6 +207,26 @@ describe("asset readiness and frame fallback", () => {
     expect(registry.state).toBe("pending");
   });
 
+  it("can restrict a ready selection to resources resident in a bounded decode cache", () => {
+    const registry = createAssetReadinessRegistry(heroExpectations(), { intro: { minReady: 1 } });
+    for (const key of ["frame-000", "frame-001", "frame-002", "frame-032"]) registry.markReady(key);
+
+    expect(registry.selectFrame(32, new Set(["frame-000", "frame-001"]))).toMatchObject({
+      renderedFrame: 1,
+      key: "frame-001",
+      reason: "nearest-ready",
+    });
+    expect(registry.selectFrame(32, new Set(["frame-032"]))).toMatchObject({
+      renderedFrame: 32,
+      key: "frame-032",
+      reason: "exact",
+    });
+    expect(registry.selectFrame(32, new Set())).toMatchObject({
+      renderedFrame: null,
+      reason: "no-ready-frame",
+    });
+  });
+
   it("produces JSON-safe diagnostics with stable status counts", () => {
     const registry = createAssetReadinessRegistry([
       { key: "icon-a", phase: "optional" },

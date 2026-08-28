@@ -1,30 +1,63 @@
 /**
- * PROTOTYPE ONLY — Safari HEVC-with-alpha selection and release gate.
+ * Safari HEVC-with-alpha policy and release gate.
  *
  * Native alpha video is only safe here as a direct DOM layer. A browser
- * decoder claim is not enough: the candidate must have an imported Apple
- * auxiliary-alpha asset, a seekable delivery (or an explicit Blob), and
- * external device alpha evidence tied to that asset/version. A
- * canvas/WebGL readback is not valid evidence for Safari's direct-DOM path.
+ * decoder claim is not enough: the candidate must use the checked-in Apple
+ * auxiliary-alpha asset and the exact real-device evidence recorded for that
+ * asset. A canvas/WebGL readback is not valid evidence for Safari's
+ * direct-DOM path.
+ *
+ * The old architecture page still imports the generic gate below for draft
+ * failure-injection scenarios. Production selection uses the stricter
+ * `evaluateProductionHevcQualification` gate.
  */
 
 import type { MediaDeliverySnapshot } from "./media-delivery";
 
 export const HEVC_ALPHA_MIME = 'video/quicktime; codecs="hvc1.1.6.L93.B0"';
 
+/** Immutable runtime identity of the AVFoundation-validated HQ MOV. */
+export const HEVC_ALPHA_PRODUCTION_ASSET = Object.freeze({
+  assetId: "hero-hevc-alpha-hq-v1",
+  sourceUrl: "/video-prototype/hero-hevc-alpha-hq.mov",
+  sha256: "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c",
+});
+
+export type HevcProductionEvidence = Readonly<{
+  assetId: string;
+  sha256: string;
+  device: "iphone-safari";
+  confirmedByUser: boolean;
+}>;
+
 /**
- * Maximum time the prototype gives a qualified HEVC candidate to download a
- * Blob and produce its first usable media frame. The budget is intentionally
- * finite: the prototype's measured first random video seek was about 1.1 s,
- * while the existing playback observation budget is 2 s; 4 s leaves room for
- * the full Blob preparation without allowing a blank hero to persist.
+ * Evidence is deliberately explicit and reviewable. It records the user's
+ * real iPhone Safari confirmation for this exact asset; a support string or
+ * a different asset cannot satisfy the production gate.
  */
-// Cloudflare Pages does not currently honor byte ranges for the staged MOV,
-// so H prepares an 11.2 MB Blob behind frame 0. Fifteen seconds gives a real
-// mobile connection a useful qualification window without leaving the
-// candidate indefinitely pending; production should use a range-capable
-// media origin instead of increasing this further.
-export const HEVC_PREPARATION_DEADLINE_MS = 15_000;
+export const HEVC_ALPHA_PRODUCTION_EVIDENCE: HevcProductionEvidence = Object.freeze({
+  assetId: HEVC_ALPHA_PRODUCTION_ASSET.assetId,
+  sha256: HEVC_ALPHA_PRODUCTION_ASSET.sha256,
+  device: "iphone-safari",
+  confirmedByUser: true,
+});
+
+/**
+ * Maximum time a qualified HEVC candidate may prepare its first usable media
+ * frame before the page fails open to C. Cloudflare Pages currently answers
+ * the staged MOV without verified byte ranges, so the runtime prepares the
+ * 11.2 MB file as a Blob behind frame 0. Four seconds bounds input lock and
+ * blank-hero risk; range delivery is intentionally deferred as a separate
+ * delivery improvement rather than hiding the cost in a longer timeout.
+ */
+export const HEVC_PREPARATION_DEADLINE_MS = 4_000;
+
+/**
+ * Lowest iOS major represented by the user-confirmed H evidence. This is an
+ * evidence boundary for the production branch, not a claim that older iOS
+ * releases cannot decode HEVC alpha.
+ */
+export const HEVC_ALPHA_MIN_IOS_MAJOR = 17;
 
 export const HEVC_RELEASE_CHECKS = [
   "macos-alpha-and-edges",
@@ -45,6 +78,114 @@ export type HevcPreparationDeadlineDecision = Readonly<{
   elapsedMs: number;
   deadlineMs: number;
 }>;
+
+export type HevcProductionQualificationInput = Readonly<{
+  vendor?: string | null;
+  userAgent?: string | null;
+  canPlayType?: string | null;
+  sourceUrl?: string | null;
+  assetId?: string | null;
+  assetSha256?: string | null;
+  /** Defaults to the checked-in, user-confirmed evidence above. */
+  evidence?: Partial<typeof HEVC_ALPHA_PRODUCTION_EVIDENCE> | null;
+}>;
+
+export type HevcProductionQualification = Readonly<{
+  qualified: boolean;
+  reason:
+    | "qualified"
+    | "safari-profile-required"
+    | "iphone-safari-evidence-floor"
+    | "ios-version-evidence-floor"
+    | "codec-unsupported"
+    | "asset-identity-mismatch"
+    | "asset-evidence-mismatch";
+}>;
+
+/**
+ * Exact browser floor for the checked-in H path. This intentionally accepts
+ * Safari's native iPhone profile only: Chromium-on-iOS and other WebKit
+ * shells do not inherit Safari alpha evidence merely because they advertise
+ * a compatible codec string.
+ */
+export function isQualifiedAppleSafariProfile(input: Readonly<{
+  vendor?: string | null;
+  userAgent?: string | null;
+}>): boolean {
+  const vendor = input.vendor ?? "";
+  const userAgent = input.userAgent ?? "";
+  return isAppleSafariProfile({ vendor, userAgent })
+    && /iPhone/i.test(userAgent)
+    && (parseIPhoneOSMajor(userAgent) ?? 0) >= HEVC_ALPHA_MIN_IOS_MAJOR;
+}
+
+/** Parse only the native iPhone UA token; missing/ambiguous versions fail closed. */
+export function parseIPhoneOSMajor(userAgent: string | null | undefined): number | null {
+  if (typeof userAgent !== "string") return null;
+  const match = userAgent.match(/\biPhone OS (\d+)(?:[_\s.;)]|$)/i);
+  if (!match) return null;
+  const major = Number(match[1]);
+  return Number.isSafeInteger(major) && major >= 0 ? major : null;
+}
+
+/** Broad Safari detection used to prevent an unqualified Safari from taking A. */
+export function isAppleSafariProfile(input: Readonly<{
+  vendor?: string | null;
+  userAgent?: string | null;
+}>): boolean {
+  const vendor = input.vendor ?? "";
+  const userAgent = input.userAgent ?? "";
+  return vendor === "Apple Computer, Inc."
+    && /Safari/i.test(userAgent)
+    && !/(Chrome|Chromium|CriOS|FxiOS|EdgiOS|OPiOS|Android)/i.test(userAgent);
+}
+
+/**
+ * Production H gate. It is pure so unsupported/unqualified environments can
+ * be tested without media elements; the browser adapter only calls it before
+ * requesting or exposing the MOV.
+ */
+export function evaluateProductionHevcQualification(
+  input: HevcProductionQualificationInput = {},
+): HevcProductionQualification {
+  const evidence = input.evidence ?? HEVC_ALPHA_PRODUCTION_EVIDENCE;
+  if (!isAppleSafariProfile(input)) {
+    return { qualified: false, reason: "safari-profile-required" };
+  }
+  if (!isQualifiedAppleSafariProfile(input)) {
+    return {
+      qualified: false,
+      reason: /iPhone/i.test(input.userAgent ?? "")
+        ? "ios-version-evidence-floor"
+        : "iphone-safari-evidence-floor",
+    };
+  }
+  if (!input.canPlayType) {
+    return { qualified: false, reason: "codec-unsupported" };
+  }
+  if (
+    input.sourceUrl !== HEVC_ALPHA_PRODUCTION_ASSET.sourceUrl
+    || input.assetId !== HEVC_ALPHA_PRODUCTION_ASSET.assetId
+    || input.assetSha256 !== HEVC_ALPHA_PRODUCTION_ASSET.sha256
+  ) {
+    return { qualified: false, reason: "asset-identity-mismatch" };
+  }
+  if (
+    evidence.assetId !== HEVC_ALPHA_PRODUCTION_EVIDENCE.assetId
+    || evidence.sha256 !== HEVC_ALPHA_PRODUCTION_EVIDENCE.sha256
+    || evidence.device !== HEVC_ALPHA_PRODUCTION_EVIDENCE.device
+    || evidence.confirmedByUser !== true
+  ) {
+    return { qualified: false, reason: "asset-evidence-mismatch" };
+  }
+  return { qualified: true, reason: "qualified" };
+}
+
+export function isProductionHevcAlphaQualified(
+  input: HevcProductionQualificationInput = {},
+): boolean {
+  return evaluateProductionHevcQualification(input).qualified;
+}
 
 export type HevcGateInput = Readonly<{
   sourceUrl?: string | null;
