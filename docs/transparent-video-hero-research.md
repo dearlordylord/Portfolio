@@ -1,7 +1,7 @@
 # Transparent, scrub-driven hero media research
 
 **Checked:** 2026-08-28  
-**Status:** temporary decision note; no production code changed  
+**Status:** temporary decision note; prototype gates are now implemented
 **Scope:** a transparent moving subject driven by scroll/pointer input on macOS Safari, iOS Safari, and Chromium.
 
 ## Decision in brief
@@ -25,6 +25,13 @@ The local prototype currently compares:
 - **B:** one packed H.264 video with RGB and a matte side by side, reconstructed in WebGL.
 - **C:** 150 individual 900×507 RGBA WebP frames drawn to a 2D canvas.
 - **FB3:** the packed-video route falling back to the C frame sequence.
+- **H:** an explicit Safari HEVC-with-alpha direct-DOM candidate. In this
+  throwaway prototype H requires a same-origin imported Apple asset and an
+  untrusted manual asset/device evidence override before it requests the file;
+  otherwise it falls back to C. Production H remains blocked until a
+  checked-in manifest binds an immutable asset URL/hash to real-device alpha
+  evidence. No canvas/WebGL alpha readback is used for H because WebKit bug
+  273006 makes that observation invalid for the DOM path.
 
 The measured compressed C sequence is about **4.58 MB** (`du -cb` over the 150 frames). One fully decoded 900×507 RGBA frame is 1,825,200 bytes; retaining all 150 as raw RGBA would be about **261 MiB** (binary), before browser/canvas overhead. Those numbers are local measurements and the memory estimate is an inference; browsers may retain compressed images or evict surfaces differently. They argue for a bounded decoded cache, not against the format.
 
@@ -67,6 +74,12 @@ RGBA source frames
 
 The practical implementation should keep `targetFrame`, `displayedFrame`, and `renderedFrame` separate. A decode completion must never move the target backward or restart playback. Only the latest target matters during a fast scroll; stale requests can be cancelled/deprioritized. A small ahead/behind window (or chunked atlas) should be selected from real-device memory/frame-time measurements, not hard-coded as a universal number. A giant atlas lowers request count but can force a very large decode surface; chunked atlases or individual files are safer.
 
+The prototype keeps its transfer estimate separate from cache occupancy: it
+counts each successfully loaded frame ID once, while the decoded cache metric
+reports only the current bounded resident neighborhood. Evicting a frame may
+reduce decoded occupancy but must not make the observed transfer total shrink
+or count a reloaded ID twice.
+
 The C sequence is particularly compatible with Cloudflare Pages: each image is an ordinary full request and does not require byte-range seeking. Immutable hashed frame URLs can be cached independently. The current 4.58 MB compressed total is small enough for this prototype, although request overhead and decode CPU still need profiling.
 
 ### Costs and mitigations
@@ -94,7 +107,16 @@ RGBA / ProRes 4444 master
 
 The Apple interoperability profile is the authoritative encoding contract: one video track, two Main Profile layers, equal dimensions, video-range base, full-range alpha, alpha-channel SEI, and a base sequence followed by its alpha sequence for every frame. Apple recommends premultiplied alpha for GPU rendering and documents that a decoder which ignores alpha may display only the base layer. ([Apple interoperability profile](https://developer.apple.com/av-foundation/HEVC-Video-with-Alpha-Interoperability-Profile.pdf), [Apple WWDC19](https://developer.apple.com/kr/videos/play/wwdc2019/506/))
 
-Render it as a normal, transparent `<video autoplay muted playsinline loop>` in the DOM. Do **not** send the Safari HEVC video through `texImage2D`, WebGL, or a canvas readback path; WebKit’s open bug specifically reports alpha loss in that route. ([WebKit bug 273006](https://bugs.webkit.org/show_bug.cgi?format=multiple&id=273006)) Use `navigator.mediaCapabilities.decodingInfo()`/the optional alpha capability query where exposed, then verify with a tiny known-transparent test clip. `canPlayType()` alone is insufficient because it says little about alpha preservation, hardware decode, or compositor behavior. WebKit documents Media Capabilities checks for codec features including alpha transparency. ([WebKit Safari 13](https://webkit.org/blog/9674/new-webkit-features-in-safari-13/))
+Render it as a normal, transparent `<video autoplay muted playsinline loop>` in the DOM. Do **not** send the Safari HEVC video through `texImage2D`, WebGL, or a canvas readback path; WebKit’s open bug specifically reports alpha loss in that route. ([WebKit bug 273006](https://bugs.webkit.org/show_bug.cgi?format=multiple&id=273006)) Use `navigator.mediaCapabilities.decodingInfo()`/the optional alpha capability query where exposed, but treat it only as a decoder claim. Alpha and edge quality must be qualified externally on the actual Safari/device matrix and tied to the exact imported asset/version; a canvas readback would test the wrong compositor path. `canPlayType()` alone is insufficient because it says little about alpha preservation, hardware decode, or compositor behavior. WebKit documents Media Capabilities checks for codec features including alpha transparency. ([WebKit Safari 13](https://webkit.org/blog/9674/new-webkit-features-in-safari-13/))
+
+While a manually enabled prototype candidate downloads its Blob and reaches the first usable
+media frame, keep only a static WebP frame-0 poster visible; do not start the
+full C frame scheduler. The prototype gives this preparation runway a measured
+4,000 ms deadline (based on the observed ~1.1 s random-seek result, the existing
+2,000 ms media observation budget, and Blob/decode headroom). It aborts and
+falls back to C on timeout. Direct-DOM H is revealed only after the gate passes
+and `loadeddata`/`canplay` readiness is observed, so a slow or stalled asset
+cannot produce an indefinite blank hero.
 
 For a scroll-driven version, pause while scrubbing and set `video.currentTime = targetFrame / fps`; treat seeking as asynchronous. Use `requestVideoFrameCallback()` to observe the presented media time, not as the target state. ([MDN `currentTime`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/currentTime), [MDN `requestVideoFrameCallback()`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback)) A short GOP/keyframe interval reduces seek latency, but exact arbitrary-frame presentation is still less deterministic than C. If the product requires exact frame `62` immediately after a drag, keep C for that interaction or prove the HEVC seek behavior on the target devices.
 
@@ -106,13 +128,17 @@ Hardware video decode can reduce CPU/battery cost, and one compressed stream avo
 
 The HEVC branch is viable only if all of these pass on the actual release matrix:
 
-- macOS Safari versions in scope: transparent corners reveal both light and dark page backgrounds; no moving halo or matte pixels at the recorded edge patches;
-- iOS Safari versions/devices in scope: same alpha and edge checks, with `muted`/`playsinline` autoplay behavior;
+- macOS Safari versions in scope: the exact imported asset has external evidence
+  tied to its asset/version; transparent corners reveal both light and dark
+  page backgrounds; no moving halo or matte pixels at the recorded edge patches;
+- iOS Safari versions/devices in scope: same asset-bound alpha and edge checks,
+  with `muted`/`playsinline` autoplay behavior;
 - first paint, continuous playback, visibility/resume, reduced motion, and explicit pause/resume;
 - target seeks around frames 0, 31, 38, 62, 70, and the terminal frame, with observed presented frame recorded separately from requested frame;
 - direct DOM rendering remains transparent; a test that uploads the video to WebGL is explicitly not a pass criterion;
 - the delivery URL supplies correct `206 Partial Content`, `Accept-Ranges`, `Content-Range`, and a nonzero `seekable` range, or the application deliberately accepts a full Blob download;
-- a non-HEVC/alpha failure selects C without a flash of an opaque base layer.
+- a non-HEVC/qualification failure selects C without requesting or exposing an
+  opaque base layer.
 
 Cloudflare Pages currently documents that it returns `200` for HTTP range requests and says spec-compliant `206` support is still being worked on. ([Cloudflare Pages serving](https://developers.cloudflare.com/pages/configuration/serving-pages/)) That is why the current prototype fetches a Blob before seeking. For a production HEVC stream, use an origin/storage path with verified range support (for example, an R2/custom delivery route) or knowingly pay the full-download cost. Pages’ single-asset limit is 25 MiB, so the current prototype files are below that limit, but range semantics—not just file size—determine video behavior. ([Pages limits](https://developers.cloudflare.com/pages/platform/limits/))
 

@@ -1,9 +1,9 @@
 /**
  * PROTOTYPE ONLY — video hero architecture comparison.
  *
- * Question: can one responsive hero stage use a native VP9-alpha WebM where
- * available, a packed H.264 color+matte video decoded through WebGL, and the
- * existing WebP frame sequence as a deterministic fallback?
+ * Question: can one responsive hero stage compare native VP9 alpha, packed
+ * H.264/WebGL, a bounded WebP sequence, and a strictly gated Safari
+ * HEVC-with-alpha direct-DOM candidate with C as the correctness fallback?
  *
  * This file intentionally keeps the wiring visible. It is not a production
  * media abstraction: every renderer owns its own loading, timing, and metric
@@ -21,6 +21,27 @@ import {
 } from "../motion/video-playback-model";
 import { hasTransparentProbePixel } from "../motion/packed-alpha";
 import { nextExactSequenceFrame } from "../motion/sequence-playback";
+import {
+  BoundedFrameCache,
+  prefetchFrames,
+  SequenceFrameCoordinator,
+  UniqueFrameTransferAccounting,
+  type SequenceFrameToken,
+} from "../motion/sequence-cache";
+import {
+  evaluateHevcAlphaGate,
+  evaluateHevcPreparationDeadline,
+  formatHevcReleaseGate,
+  HEVC_ALPHA_MIME,
+  HEVC_PREPARATION_DEADLINE_MS,
+  type HevcQualification,
+} from "../motion/hevc-alpha";
+import {
+  formatMediaDelivery,
+  mediaDeliveryFromBlob,
+  pendingMediaDelivery,
+  type MediaDeliverySnapshot,
+} from "../motion/media-delivery";
 
 type Variant = PlaybackRenderer;
 
@@ -35,6 +56,7 @@ const VARIANTS: readonly VariantDefinition[] = [
   { key: "a", shortLabel: "A", label: "Native VP9 alpha", detail: "transparent WebM" },
   { key: "b", shortLabel: "B", label: "Packed H.264 + WebGL", detail: "RGB + matte shader" },
   { key: "c", shortLabel: "C", label: "WebP sequence", detail: "baseline fallback" },
+  { key: "h", shortLabel: "H", label: "Safari HEVC alpha → C", detail: "gated direct DOM candidate" },
 ];
 
 const FRAME_COUNT = 150;
@@ -53,18 +75,26 @@ const WEBM_BYTES = 2_238_324;
 const MP4_BYTES = 1_839_215;
 const HQ_WEBM_BYTES = 0;
 const HQ_MP4_BYTES = 1_796_188;
+// Deliberately zero until an Apple-authoring pipeline supplies a compliant
+// HEVC-with-alpha file. `hevcSrc=/same-origin/path.mp4` enables a real-device
+// import without allowing an unreviewed cross-origin asset into the gate.
+const HEVC_BYTES = 0;
+const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-v1";
 const SOURCE_WIDTH = 900;
 const SOURCE_HEIGHT = 507;
 const HQ_WIDTH = 1280;
 const HQ_HEIGHT = 720;
 const PACKED_WIDTH = 1800;
 const PACKED_HEIGHT = 508;
+const C_CACHE_CAPACITY = 12;
+const C_PREFETCH_RADIUS = 3;
 const WEBP_PREFIX = "/Кадры/frame_";
 const WEBP_SUFFIX = "_delay-0.067s.webp";
 const WEBM_SOURCE = "/video-prototype/hero-alpha-vp9.webm";
 const MP4_SOURCE = "/video-prototype/hero-color-matte.mp4";
 const HQ_WEBM_SOURCE = "/video-prototype/hq-hero-alpha-vp9.webm";
 const HQ_MP4_SOURCE = "/video-prototype/hq-hero-color-matte.mp4";
+const HEVC_DEFAULT_SOURCE = "/video-prototype/hero-hevc-alpha.mp4";
 const prototypeParams = new URLSearchParams(window.location.search);
 // Continuous playback is the comparison default. The production-style
 // checkpoint at frame 31 is opt-in so a bare prototype URL cannot look broken.
@@ -72,6 +102,26 @@ const segmentedPlayback = prototypeParams.get("mode") === "segmented";
 const requestedQuality = prototypeParams.get("quality")?.toLowerCase() === "hq" ? "hq" : "standard";
 const activeQuality: "standard" | "hq" = requestedQuality === "hq" && HQ_MP4_BYTES > 0 ? "hq" : "standard";
 const nativeQuality: "standard" | "hq" = activeQuality === "hq" && HQ_WEBM_BYTES > 0 ? "hq" : "standard";
+function sameOriginPath(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/")) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+const hevcSourceOverride = sameOriginPath(prototypeParams.get("hevcSrc"));
+const hevcSource = hevcSourceOverride ?? HEVC_DEFAULT_SOURCE;
+const hevcAssetPresent = HEVC_BYTES > 0 || hevcSourceOverride !== null;
+const hevcAssetId = prototypeParams.get("hevcAssetId")?.trim() || (HEVC_BYTES > 0 ? HEVC_DEFAULT_ASSET_ID : null);
+// This query value is an untrusted manual prototype override. It is useful for
+// exercising the H state machine with an imported asset, but it is not
+// production evidence; shipping H requires a checked-in manifest binding an
+// immutable asset URL/hash to a real-device alpha record.
+const hevcQualificationEvidence = prototypeParams.get("hevcQualified")?.trim() || null;
+const hevcQualification: HevcQualification = hevcQualificationEvidence ? "qualified" : "unqualified";
 
 // `forceFail` accepts repeated query parameters or a comma-separated list so
 // a reviewer can exercise one boundary (`forceFail=b`) or a full cascade
@@ -81,7 +131,7 @@ const forcedFailures = new Set(
     .getAll("forceFail")
     .flatMap((value) => value.split(","))
     .map((value) => value.trim().toLowerCase())
-    .filter((value) => value === "a" || value === "b" || value === "webgl"),
+    .filter((value) => value === "a" || value === "b" || value === "h" || value === "hevc" || value === "webgl"),
 );
 
 function requiredElement<T extends HTMLElement>(id: string): T {
@@ -135,6 +185,13 @@ const metricElements = {
   reason: document.getElementById("metric-reason"),
   resumeRequested: document.getElementById("metric-resume-requested"),
   progressAge: document.getElementById("metric-progress-age"),
+  cache: document.getElementById("metric-cache"),
+  hevc: document.getElementById("metric-hevc"),
+  hevcProof: document.getElementById("metric-hevc-proof"),
+  hevcDelivery: document.getElementById("metric-hevc-delivery"),
+  hevcPrep: document.getElementById("metric-hevc-prep"),
+  hevcGate: document.getElementById("metric-hevc-gate"),
+  realDeviceGate: document.getElementById("metric-real-device-gate"),
 } as const;
 
 type MetricElement = HTMLElement | null;
@@ -163,6 +220,13 @@ type Metrics = {
   events: string[];
   quality: string;
   playback: VideoPlaybackSnapshot | null;
+  cache: string;
+  hevc: string;
+  hevcProof: string;
+  hevcDelivery: string;
+  hevcPrep: string;
+  hevcGate: string;
+  realDeviceGate: string;
 };
 
 type Runtime = {
@@ -225,6 +289,13 @@ function createMetrics(requested: Variant): Metrics {
     events: [],
     quality: activeQuality === "hq" ? "HQ packed B · A/C standard" : "standard ladder",
     playback: null,
+    cache: "not active",
+    hevc: "not checked",
+    hevcProof: "not run",
+    hevcDelivery: formatMediaDelivery(pendingMediaDelivery()),
+    hevcPrep: "not active",
+    hevcGate: "not active",
+    realDeviceGate: "not applicable",
   };
 }
 
@@ -249,16 +320,20 @@ function parseVariant(value: string | null): Variant {
     case "sequence":
     case "fallback":
       return "c";
+    case "h":
+    case "hybrid":
+    case "hevc":
+      return "h";
     default:
       return "a";
   }
 }
 
-function shouldForceFailure(key: "a" | "b" | "webgl"): boolean {
+function shouldForceFailure(key: "a" | "b" | "h" | "hevc" | "webgl"): boolean {
   return forcedFailures.has(key);
 }
 
-function injectFailure(key: "a" | "b" | "webgl"): void {
+function injectFailure(key: "a" | "b" | "h" | "hevc" | "webgl"): void {
   const reason = `injected: forceFail=${key}`;
   metrics.state = `${key.toUpperCase()} forced failure`;
   addFallbackReason(reason);
@@ -423,6 +498,13 @@ function renderMetrics(): void {
       ? "pending"
       : `${Math.round(playback.lastProgressAgeMs)} ms`,
   );
+  writeMetric(metricElements.cache, metrics.cache);
+  writeMetric(metricElements.hevc, metrics.hevc);
+  writeMetric(metricElements.hevcProof, metrics.hevcProof);
+  writeMetric(metricElements.hevcDelivery, metrics.hevcDelivery);
+  writeMetric(metricElements.hevcPrep, metrics.hevcPrep);
+  writeMetric(metricElements.hevcGate, metrics.hevcGate);
+  writeMetric(metricElements.realDeviceGate, metrics.realDeviceGate);
   writeMetric(metricElements.fallback, metrics.fallbackReason);
   statusLabel.textContent = metrics.state;
   metricEvents.replaceChildren(
@@ -495,6 +577,7 @@ function observeNativeAlpha(
   video: HTMLVideoElement,
   isCurrent: () => boolean,
   onFailure: (reason: string) => void,
+  onSuccess?: () => void,
 ): () => void {
   const probe = document.createElement("canvas");
   probe.width = 2;
@@ -516,6 +599,7 @@ function observeNativeAlpha(
         metrics.alpha += " · pixel probe passed";
         renderMetrics();
         recordEvent("A alpha pixel probe passed");
+        onSuccess?.();
       }
     } catch (error) {
       checked = true;
@@ -1010,6 +1094,410 @@ function observeNativePresentation(
   };
 }
 
+/**
+ * HEVC candidate runtime. An explicit asset/device evidence override is
+ * required before the browser requests this file. In this prototype the
+ * override is untrusted query input; production still needs a checked-in
+ * asset/hash/device manifest. The element remains hidden until capability and
+ * seekable delivery are confirmed; all other outcomes hand off to C before
+ * any opaque base frame can be shown. No canvas/WebGL alpha probe is used
+ * because that readback is invalid for Safari's direct-DOM path.
+ */
+function setupHevcAlphaCandidate(run: number): Runtime | null {
+  const capabilityProbe = document.createElement("video");
+  const canPlayType = capabilityProbe.canPlayType(HEVC_ALPHA_MIME);
+  metrics.hevc = canPlayType || "unsupported";
+  metrics.realDeviceGate = formatHevcReleaseGate();
+  recordEvent(`HEVC alpha canPlayType=${metrics.hevc}`);
+  if (shouldForceFailure("h") || shouldForceFailure("hevc")) {
+    injectFailure(shouldForceFailure("h") ? "h" : "hevc");
+    metrics.hevcGate = "forced-failure";
+    return null;
+  }
+
+  const binding = playbackBinding ?? createPlaybackBinding("h");
+  playbackBinding = binding;
+  const initialDelivery = pendingMediaDelivery();
+  const initialDecision = evaluateHevcAlphaGate({
+    sourceUrl: hevcAssetPresent ? hevcSource : null,
+    assetId: hevcAssetId,
+    assetPresent: hevcAssetPresent,
+    canPlayType,
+    directDom: true,
+    qualification: hevcQualification,
+    qualificationEvidence: hevcQualificationEvidence,
+    delivery: initialDelivery,
+  });
+  metrics.hevcProof = hevcQualificationEvidence
+    ? `manual override · ${hevcQualificationEvidence}`
+    : "no manual override · pass hevcQualified=asset:…|device:…";
+  metrics.hevcDelivery = formatMediaDelivery(initialDelivery);
+  metrics.hevcPrep = initialDecision.status === "pending"
+    ? `waiting · deadline ${HEVC_PREPARATION_DEADLINE_MS} ms`
+    : "not started · gate rejected";
+  metrics.hevcGate = initialDecision.reason;
+  if (initialDecision.status === "fallback") {
+    addFallbackReason(`H ${initialDecision.reason}`);
+    recordEvent(`H gate rejected before DOM exposure: ${initialDecision.reason}`);
+    return null;
+  }
+
+  const preparationPoster = document.createElement("img");
+  preparationPoster.className = "hero-render hero-render-poster";
+  preparationPoster.src = frameSource(0);
+  preparationPoster.decoding = "async";
+  preparationPoster.alt = "";
+  preparationPoster.setAttribute("aria-hidden", "true");
+
+  const video = document.createElement("video");
+  video.className = "hero-render hero-render-source";
+  video.autoplay = false;
+  video.defaultMuted = true;
+  video.muted = true;
+  video.loop = !segmentedPlayback;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.setAttribute("muted", "");
+  video.setAttribute("aria-hidden", "true");
+  video.dataset.renderer = "hevc-alpha-dom";
+  video.dataset.qualification = hevcQualificationEvidence ?? "unqualified";
+  video.style.visibility = "hidden";
+  mediaStage.replaceChildren(preparationPoster, video);
+  metrics.active = "h";
+  metrics.alpha = "HEVC alpha candidate hidden · direct DOM only";
+  metrics.state = "preparing hidden HEVC alpha candidate";
+  markFirstVisible();
+  recordEvent("H preparation poster visible (WebP frame 0)");
+  renderMetrics();
+
+  let delivery: MediaDeliverySnapshot = initialDelivery;
+  let stopped = false;
+  let accepted = false;
+  let fallbackIssued = false;
+  let objectUrl: string | null = null;
+  let activeRuntime: Runtime | null = null;
+  let probeErrorListener: (() => void) | null = null;
+  let mediaReady = false;
+  let preparationTimer: number | null = null;
+  const preparationStartedAt = currentTime();
+  const fetchController = new AbortController();
+
+  const isCurrent = (): boolean => runId === run && runtime?.variant === "h" && !stopped;
+  const clearPreparationTimer = (): void => {
+    if (preparationTimer !== null) {
+      window.clearTimeout(preparationTimer);
+      preparationTimer = null;
+    }
+  };
+  const updateGate = (): void => {
+    if (!isCurrent() || accepted || fallbackIssued) return;
+    const decision = evaluateHevcAlphaGate({
+      sourceUrl: hevcSource,
+      assetId: hevcAssetId,
+      assetPresent: hevcAssetPresent,
+      canPlayType,
+      directDom: true,
+      qualification: hevcQualification,
+      qualificationEvidence: hevcQualificationEvidence,
+      delivery,
+    });
+    metrics.hevcProof = hevcQualificationEvidence
+      ? `manual override · ${hevcQualificationEvidence}`
+      : "no manual override · pass hevcQualified=asset:…|device:…";
+    metrics.hevcDelivery = formatMediaDelivery(delivery);
+    metrics.hevcGate = decision.reason;
+    video.dataset.qualification = hevcQualificationEvidence ?? "unqualified";
+    renderMetrics();
+    if (decision.status === "fallback") {
+      clearPreparationTimer();
+      fallbackIssued = true;
+      metrics.error = `H gate: ${decision.reason}`;
+      addFallbackReason(`H ${decision.reason}`);
+      recordEvent(`H gate rejected before DOM exposure: ${decision.reason}`);
+      fallbackFrom("h", `H ${decision.reason}`);
+      return;
+    }
+    if (decision.status !== "accepted") return;
+    if (!mediaReady) {
+      metrics.hevcGate = "capability-manual-override-delivery-passed · waiting loadeddata/canplay";
+      renderMetrics();
+      return;
+    }
+    clearPreparationTimer();
+    accepted = true;
+    metrics.hevcGate = "accepted · direct DOM alpha video";
+    metrics.alpha = "HEVC alpha track → direct DOM video (manual prototype override)";
+    metrics.state = "HEVC alpha accepted · direct DOM visible (prototype only)";
+    video.dataset.qualification = hevcQualificationEvidence ?? "qualified";
+    preparationPoster.removeAttribute("src");
+    preparationPoster.remove();
+    video.classList.remove("hero-render-source");
+    video.style.visibility = "visible";
+    if (probeErrorListener) video.removeEventListener("error", probeErrorListener);
+    probeErrorListener = null;
+    activeRuntime = createHevcDomRuntime(run, video, binding);
+    if (!activeRuntime) {
+      fallbackIssued = true;
+      fallbackFrom("h", "H direct DOM runtime unavailable");
+      return;
+    }
+    recordEvent("H manual qualification override accepted; direct DOM video exposed");
+  };
+
+  const fallbackCandidate = (reason: string): void => {
+    if (stopped || fallbackIssued || accepted) return;
+    clearPreparationTimer();
+    fallbackIssued = true;
+    metrics.error = `H gate: ${reason}`;
+    addFallbackReason(`H ${reason}`);
+    recordEvent(`H gate failed before DOM exposure: ${reason}`);
+    fallbackFrom("h", `H ${reason}`);
+  };
+
+  probeErrorListener = () => fallbackCandidate("media-error");
+  video.addEventListener("error", probeErrorListener);
+
+  const metadataListener = (): void => {
+    if (!isCurrent()) return;
+    updateMediaMetrics(video, "HEVC metadata pending");
+    renderMetrics();
+  };
+  const readinessListener = (event: Event): void => {
+    if (!isCurrent()) return;
+    mediaReady = true;
+    metrics.hevcPrep = `${event.type} ready · ${formatMs(currentTime() - preparationStartedAt)}`;
+    updateMediaMetrics(video, "HEVC metadata pending");
+    updateGate();
+  };
+  video.addEventListener("loadedmetadata", metadataListener);
+  video.addEventListener("loadeddata", metadataListener);
+  video.addEventListener("loadeddata", readinessListener);
+  video.addEventListener("canplay", readinessListener);
+
+  const preparationDeadlineListener = (): void => {
+    if (!isCurrent() || accepted || fallbackIssued) return;
+    const elapsedMs = currentTime() - preparationStartedAt;
+    const deadline = evaluateHevcPreparationDeadline(elapsedMs, HEVC_PREPARATION_DEADLINE_MS);
+    if (deadline.status !== "timed-out") {
+      preparationTimer = window.setTimeout(preparationDeadlineListener, Math.max(1, deadline.deadlineMs - deadline.elapsedMs));
+      return;
+    }
+    metrics.hevcPrep = `timed out · ${formatMs(deadline.elapsedMs)} (deadline ${deadline.deadlineMs} ms)`;
+    metrics.hevcGate = "preparation-timeout";
+    fetchController.abort();
+    fallbackCandidate("preparation-timeout");
+  };
+  preparationTimer = window.setTimeout(preparationDeadlineListener, HEVC_PREPARATION_DEADLINE_MS);
+
+  void fetch(hevcSource, { signal: fetchController.signal })
+    .then((response) => {
+      if (!response.ok) throw new Error(`media fetch ${response.status}`);
+      return response.blob();
+    })
+    .then((blob) => {
+      if (!isCurrent()) return;
+      delivery = mediaDeliveryFromBlob(blob.size);
+      if (delivery.mode === "failed") {
+        fallbackCandidate(delivery.reason);
+        return;
+      }
+      objectUrl = URL.createObjectURL(blob);
+      video.dataset.objectUrl = objectUrl;
+      video.src = objectUrl;
+      video.load();
+      metrics.hevcDelivery = formatMediaDelivery(delivery);
+      metrics.hevcPrep = `Blob ready · ${formatMs(currentTime() - preparationStartedAt)} · waiting loadeddata/canplay`;
+      metrics.hevcGate = "manual qualification override recorded · delivery ready";
+      recordEvent(`H seekable Blob ready (${formatBytes(blob.size)})`);
+      updateGate();
+    })
+    .catch((error) => {
+      if (!isCurrent()) return;
+      delivery = { ...delivery, mode: "failed", reason: error instanceof Error ? error.message : String(error) };
+      metrics.hevcDelivery = formatMediaDelivery(delivery);
+      metrics.hevcPrep = `failed · ${formatMs(currentTime() - preparationStartedAt)}`;
+      fallbackCandidate(`delivery-failed:${delivery.reason}`);
+    });
+
+  const deferredRuntime: Runtime = {
+    variant: "h",
+    pauseForScrub: () => activeRuntime?.pauseForScrub(),
+    resumeFromScrub: (frame) => activeRuntime?.resumeFromScrub(frame),
+    resumeAfterScrubRelease: (frame) => activeRuntime?.resumeAfterScrubRelease(frame),
+    togglePlayback: () => activeRuntime?.togglePlayback(),
+    seek: (frame) => activeRuntime?.seek(frame),
+    destroy: () => {
+      if (stopped) return;
+      stopped = true;
+      clearPreparationTimer();
+      fetchController.abort();
+      video.removeEventListener("loadedmetadata", metadataListener);
+      video.removeEventListener("loadeddata", metadataListener);
+      video.removeEventListener("loadeddata", readinessListener);
+      video.removeEventListener("canplay", readinessListener);
+      if (probeErrorListener) video.removeEventListener("error", probeErrorListener);
+      activeRuntime?.destroy();
+      activeRuntime = null;
+      releaseVideoElement(video);
+      objectUrl = null;
+      preparationPoster.removeAttribute("src");
+      preparationPoster.remove();
+      video.remove();
+      playToggle.classList.remove("visible");
+    },
+  };
+  return deferredRuntime;
+}
+
+/** Direct DOM controls for a HEVC candidate that already passed the hidden gate. */
+function createHevcDomRuntime(run: number, video: HTMLVideoElement, binding: PlaybackBinding): Runtime {
+  video.loop = !segmentedPlayback;
+  const isCurrent = (): boolean => runId === run && runtime?.variant === "h";
+  let readyDispatched = false;
+  let seekStartedAt: number | null = null;
+  let segmentPhase: "intro" | "waiting" | "main" | "terminal" | "loop" = !segmentedPlayback ? "loop" : "intro";
+  const applyReady = (): void => {
+    if (readyDispatched) return;
+    readyDispatched = true;
+    dispatchMediaReady(binding, video, isCurrent);
+    if (shouldAutoplayHandoff(binding.snapshot())) playVideo(video, isCurrent);
+  };
+  const removeMediaListeners = appendMediaEvents(video, isCurrent, (reason) => {
+    fallbackFrom("h", `H media error: ${reason}`);
+  }, {
+    onReady: applyReady,
+    onPlaying: () => binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() }),
+    onPaused: () => {
+      const state = binding.snapshot();
+      if (state.reason !== "user-pause" && !state.seeking) {
+        binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "media-paused" });
+      }
+    },
+  });
+  const timeListener = (): void => {
+    if (!isCurrent()) return;
+    const frame = video.currentTime * FRAME_RATE;
+    binding.dispatch({ type: "media-timeupdate", atMs: playbackTimeMs(), currentTimeSeconds: video.currentTime });
+    setCopy(frame);
+    if (!segmentedPlayback) return;
+    if (segmentPhase === "intro" && video.currentTime >= INTRO_END_FRAME / FRAME_RATE) {
+      segmentPhase = "waiting";
+      video.pause();
+      video.currentTime = INTRO_END_FRAME / FRAME_RATE;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
+      metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
+      playToggle.textContent = "Resume main segment";
+      playToggle.classList.add("visible");
+      recordEvent(`segment pause @ frame ${INTRO_END_FRAME}`);
+    } else if (segmentPhase === "main" && video.currentTime >= LAST_FRAME_PTS_SECONDS) {
+      segmentPhase = "terminal";
+      video.pause();
+      video.currentTime = LAST_FRAME_PTS_SECONDS;
+      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-terminal-pause" });
+      metrics.segment = `exact terminal pause · frame ${LAST_FRAME}`;
+      playToggle.textContent = "Replay intro segment";
+      playToggle.classList.add("visible");
+      recordEvent(`terminal pause @ frame ${LAST_FRAME}`);
+    }
+  };
+  const seekListener = (): void => {
+    if (!isCurrent() || seekStartedAt === null) return;
+    metrics.seekMs = currentTime() - seekStartedAt;
+    seekStartedAt = null;
+    recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
+  };
+  video.addEventListener("timeupdate", timeListener);
+  video.addEventListener("seeked", seekListener);
+  const stopPresentation = observeNativePresentation(video, isCurrent, binding);
+  if (video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) applyReady();
+  else playVideo(video, isCurrent);
+  const pauseForScrub = (): void => {
+    if (!isCurrent()) return;
+    video.pause();
+    binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "scrub-pause" });
+    metrics.state = `scrub held frame ${Math.round(metrics.frame)}`;
+    playToggle.textContent = "Play if seek stalls";
+    playToggle.classList.add("visible");
+    recordEvent(`scrub paused at frame ${Math.round(metrics.frame)}`);
+  };
+  const resumeFromScrub = (frame: number): void => {
+    if (!isCurrent()) return;
+    const target = normalizeFrame(frame);
+    video.currentTime = target / FRAME_RATE;
+    if (segmentedPlayback) segmentPhase = target < INTRO_END_FRAME ? "intro" : target < LAST_FRAME ? "main" : "terminal";
+    metrics.state = `playing from scrub frame ${target}`;
+    playToggle.classList.remove("visible");
+    recordEvent(`scrub released by Play at frame ${target}`);
+    binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
+    playVideo(video, isCurrent);
+  };
+  const resumeAfterScrubRelease = (frame: number): void => {
+    if (!isCurrent()) return;
+    const target = normalizeFrame(frame);
+    video.currentTime = target / FRAME_RATE;
+    if (segmentedPlayback) {
+      if (target >= LAST_FRAME) {
+        segmentPhase = "terminal";
+        video.pause();
+        metrics.segment = `terminal frame confirmed · pause @ frame ${LAST_FRAME}`;
+        return;
+      }
+      segmentPhase = target < INTRO_END_FRAME ? "intro" : "main";
+    }
+    binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
+    playVideo(video, isCurrent);
+  };
+  const togglePlayback = (): void => {
+    if (segmentedPlayback && segmentPhase === "waiting") {
+      segmentPhase = "main";
+      video.currentTime = INTRO_END_FRAME / FRAME_RATE;
+      video.loop = false;
+      playToggle.classList.remove("visible");
+      playVideo(video, isCurrent);
+      return;
+    }
+    if (segmentedPlayback && segmentPhase === "terminal") {
+      segmentPhase = "intro";
+      video.currentTime = 0;
+      video.loop = false;
+      playToggle.classList.remove("visible");
+      playVideo(video, isCurrent);
+      return;
+    }
+    if (video.paused) {
+      playToggle.classList.remove("visible");
+      playVideo(video, isCurrent);
+    } else {
+      video.pause();
+      playToggle.textContent = "Play animation";
+      playToggle.classList.add("visible");
+    }
+  };
+  return {
+    variant: "h",
+    pauseForScrub,
+    resumeFromScrub,
+    resumeAfterScrubRelease,
+    togglePlayback,
+    seek: (frame) => {
+      if (!isCurrent() || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      const target = normalizeFrame(frame);
+      seekStartedAt = currentTime();
+      video.currentTime = target / FRAME_RATE;
+      recordEvent(`seek requested frame ${target}`);
+    },
+    destroy: () => {
+      removeMediaListeners();
+      stopPresentation();
+      video.removeEventListener("timeupdate", timeListener);
+      video.removeEventListener("seeked", seekListener);
+      video.pause();
+    },
+  };
+}
+
 function createPackedWebGl(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
@@ -1454,13 +1942,17 @@ function setupWebpSequence(run: number): Runtime {
   playbackBinding = binding;
   const handoff = binding.snapshot();
   const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
-  const hasReady = handoff.eventTape.some((entry) => entry.event === "media-ready");
+  // A renderer handoff may already have delivered `media-ready`. Keep this
+  // mutable: frame 0 can be evicted from the bounded cache and loaded again,
+  // but that must not reset the playback state or clear seek evidence.
+  let readyDispatched = handoff.eventTape.some((entry) => entry.event === "media-ready");
   metrics.active = "c";
   metrics.alpha = "source WebP RGBA → 2D canvas alpha (standard fallback)";
   metrics.state = "loading WebP sequence (standard fallback)";
   metrics.durationSeconds = FRAME_DURATION_SECONDS;
   metrics.resolution = `${SOURCE_WIDTH}×${SOURCE_HEIGHT}`;
   metrics.transferredBytes = 0;
+  metrics.cache = `0/${C_CACHE_CAPACITY} decoded · bounded`;
   renderMetrics();
   if (!context) {
     metrics.state = "canvas unavailable";
@@ -1482,14 +1974,14 @@ function setupWebpSequence(run: number): Runtime {
   // initial pump must still be allowed to request frame 0; runId protects
   // late callbacks from a renderer that has already been replaced.
   const isCurrent = () => runId === run && (runtime?.variant === "c" || (runtime === null && currentVariant === "c"));
-  const images: Array<HTMLImageElement | null> = Array.from({ length: FRAME_COUNT }, () => null);
-  const loaded = new Set<number>();
+  const cache = new BoundedFrameCache<HTMLImageElement>(C_CACHE_CAPACITY, (image) => image.removeAttribute("src"));
+  const transferAccounting = new UniqueFrameTransferAccounting(FRAME_COUNT, WEBP_TOTAL_BYTES);
   const failed = new Set<number>();
-  const queue: number[] = hasReady && handoffFrame > 0 ? [handoffFrame] : [0];
-  for (let frame = 0; frame < FRAME_COUNT; frame += 1) {
-    if (!queue.includes(frame)) queue.push(frame);
-  }
-  const inFlight = new Set<number>();
+  const queue: number[] = [];
+  const queued = new Set<number>();
+  const inFlight = new Map<number, { image: HTMLImageElement; token?: SequenceFrameToken }>();
+  const coordinator = new SequenceFrameCoordinator(FRAME_COUNT);
+  let targetToken = coordinator.request(handoffFrame);
   let stopped = false;
   let loadPumpHandle: number | null = null;
   let animationHandle: number | null = null;
@@ -1506,34 +1998,71 @@ function setupWebpSequence(run: number): Runtime {
   let pendingSeek: { frame: number; startedAt: number } | null = null;
   let resumeAfterScrubRelease: (frame: number) => void = () => undefined;
 
-  const draw = (frame: number, allowFallback = true): boolean => {
+  const updateCacheMetrics = (): void => {
+    const snapshot = cache.snapshot();
+    const transfer = transferAccounting.snapshot();
+    metrics.loadedFrames = snapshot.size;
+    metrics.cache = `${snapshot.size}/${snapshot.capacity} decoded · ${transfer.loadedFrameCount} unique loaded · ${snapshot.evictions} evictions`;
+    renderMetrics();
+  };
+
+  const queueFrame = (frame: number, front = false): void => {
+    const target = normalizeFrame(frame);
+    if (cache.has(target) || inFlight.has(target) || failed.has(target) || queued.has(target)) return;
+    queued.add(target);
+    if (front) queue.unshift(target);
+    else queue.push(target);
+  };
+
+  const queueNeighborhood = (frame: number): void => {
+    for (const candidate of prefetchFrames(frame, FRAME_COUNT, C_PREFETCH_RADIUS)) {
+      queueFrame(candidate, candidate === frame);
+    }
+  };
+
+  const draw = (frame: number, allowFallback = true, token?: SequenceFrameToken): boolean => {
     if (!isCurrent() || stopped) return false;
-    const exact = images[frame];
+    const normalized = normalizeFrame(frame);
+    const exact = cache.get(normalized);
     if (!exact && !allowFallback) return false;
-    const fallback = exact ?? images.slice(0, frame + 1).reverse().find((image) => image !== null) ?? images.find((image) => image !== null);
+    const cachedFrames = [...cache.frames()];
+    const fallbackFrame = exact
+      ? normalized
+      : cachedFrames.filter((candidate) => candidate <= normalized).sort((left, right) => right - left)[0]
+        ?? cachedFrames.sort((left, right) => Math.abs(left - normalized) - Math.abs(right - normalized))[0];
+    const fallback = fallbackFrame === undefined ? undefined : cache.get(fallbackFrame);
     if (!fallback) return false;
+    // An exact image can only be committed through the current target token.
+    // A late image callback may still populate the bounded cache, but it must
+    // not paint over a newer target or move renderedFrame backwards.
+    if (exact && token) {
+      const displayed = coordinator.display(token);
+      if (!displayed.accepted) return false;
+      const rendered = coordinator.render(token);
+      if (!rendered.accepted) return false;
+    }
     const width = SOURCE_WIDTH;
     const height = SOURCE_HEIGHT;
     context.clearRect(0, 0, width, height);
     context.drawImage(fallback, 0, 0, width, height);
     markFirstVisible();
-    if (exact) currentFrame = frame;
+    if (exact) currentFrame = normalized;
     // Do not let a fallback copy of an as-yet-unloaded frame advance the
     // sequence clock. The first exact drawable frame establishes the clock;
     // on a renderer handoff that exact frame is the handed-off target.
-    if (startedAt === null && exact) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
+    if (startedAt === null && exact) startedAt = currentTime() - (normalized / FRAME_RATE) * 1000;
     const before = binding.snapshot();
     if (exact && (playing || before.seeking)) {
       binding.dispatch({
         type: "media-presented",
         atMs: playbackTimeMs(),
-        frame,
-        currentTimeSeconds: frame / FRAME_RATE,
+        frame: normalized,
+        currentTimeSeconds: normalized / FRAME_RATE,
         source: "sequence-draw",
       });
     }
-    setCopy(frame);
-    if (pendingSeek && pendingSeek.frame === frame && exact) {
+    setCopy(exact ? normalized : fallbackFrame ?? normalized);
+    if (pendingSeek && pendingSeek.frame === normalized && exact) {
       metrics.seekMs = currentTime() - pendingSeek.startedAt;
       pendingSeek = null;
       recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
@@ -1541,22 +2070,39 @@ function setupWebpSequence(run: number): Runtime {
     return exact !== null;
   };
 
-  const loadOne = (frame: number): void => {
-    if (stopped || inFlight.has(frame) || loaded.has(frame) || failed.has(frame)) return;
-    inFlight.add(frame);
+  const requestTarget = (frame: number): SequenceFrameToken => {
+    targetToken = coordinator.request(normalizeFrame(frame));
+    queueNeighborhood(targetToken.frame);
+    pump();
+    return targetToken;
+  };
+
+  const loadOne = (frame: number, token?: SequenceFrameToken): void => {
+    const normalized = normalizeFrame(frame);
+    const existing = inFlight.get(normalized);
+    if (existing) {
+      if (token) existing.token = token;
+      return;
+    }
+    if (stopped || cache.has(normalized) || failed.has(normalized)) return;
     const image = new Image();
     image.decoding = "async";
-    images[frame] = image;
+    const request = { image, ...(token ? { token } : {}) };
+    inFlight.set(normalized, request);
     image.addEventListener("load", () => {
-      inFlight.delete(frame);
-      if (!isCurrent()) return;
-      loaded.add(frame);
-      metrics.loadedFrames = loaded.size;
-      // The approximation scales the committed total by completed frame count;
-      // it remains useful when browser resource timings report cache hits as 0.
-      const sequenceBytes = WEBP_TOTAL_BYTES;
-      metrics.transferredBytes = Math.round((loaded.size / FRAME_COUNT) * sequenceBytes);
-      if (frame === 0 && !hasReady) {
+      if (inFlight.get(normalized)?.image === image) inFlight.delete(normalized);
+      if (!isCurrent()) {
+        image.removeAttribute("src");
+        return;
+      }
+      cache.set(normalized, image);
+      // Count successful frame IDs separately from the bounded decoded cache:
+      // eviction must not make transferred bytes go backwards, and a reload
+      // of an already-counted ID must not double-count it.
+      transferAccounting.record(normalized);
+      metrics.transferredBytes = transferAccounting.snapshot().estimatedBytes;
+      if (normalized === 0 && !readyDispatched) {
+        readyDispatched = true;
         markReady();
         binding.dispatch({
           type: "media-ready",
@@ -1565,30 +2111,32 @@ function setupWebpSequence(run: number): Runtime {
           currentTimeSeconds: 0,
         });
         metrics.state = "ready / playing WebP sequence";
-        draw(0);
+        draw(0, false, request.token ?? targetToken);
       }
-      if (hasReady && frame === handoffFrame && handoffFrame > 0) draw(frame);
-      if (pendingSeek?.frame === frame) draw(frame);
+      if (readyDispatched && normalized === handoffFrame && handoffFrame > 0) draw(normalized, false, request.token ?? targetToken);
+      if (pendingSeek?.frame === normalized) draw(normalized, false, request.token ?? targetToken);
+      updateCacheMetrics();
       renderMetrics();
       pump();
     });
     image.addEventListener("error", () => {
-      inFlight.delete(frame);
-      failed.add(frame);
+      if (inFlight.get(normalized)?.image === image) inFlight.delete(normalized);
+      failed.add(normalized);
       if (!isCurrent()) return;
-      metrics.error = `frame ${frame} failed`;
-      recordEvent(`WebP frame ${frame} failed`);
+      metrics.error = `frame ${normalized} failed`;
+      recordEvent(`WebP frame ${normalized} failed`);
       pump();
     });
-    image.src = frameSource(frame);
+    image.src = frameSource(normalized);
   };
 
   const pump = (): void => {
     if (stopped || !isCurrent()) return;
-    const concurrency = loaded.size < 1 ? 1 : 5;
+    const concurrency = cache.size < 1 ? 1 : 5;
     while (inFlight.size < concurrency && queue.length > 0) {
       const next = queue.shift();
       if (next === undefined) break;
+      queued.delete(next);
       loadOne(next);
     }
   };
@@ -1606,16 +2154,20 @@ function setupWebpSequence(run: number): Runtime {
         : Math.floor((elapsed % FRAME_DURATION_SECONDS) * FRAME_RATE);
       let frame = currentFrame;
       if (desiredFrame !== currentFrame) {
-        const next = nextExactSequenceFrame(currentFrame, desiredFrame, loaded, FRAME_COUNT, !segmentedPlayback);
+        const next = nextExactSequenceFrame(currentFrame, desiredFrame, new Set(cache.frames()), FRAME_COUNT, !segmentedPlayback);
         if (next === null) {
           // Hold the logical clock at the last exact frame until the next
           // contiguous image is decoded. A fallback copy may be visible, but
           // it must never make the sequence claim progress it cannot draw.
           const nextCandidate = currentFrame < LAST_FRAME ? currentFrame + 1 : (segmentedPlayback ? null : 0);
-          if (nextCandidate !== null) loadOne(nextCandidate);
+          if (nextCandidate !== null) {
+            queueFrame(nextCandidate, true);
+            loadOne(nextCandidate);
+          }
           startedAt = now - (currentFrame / FRAME_RATE) * 1000;
         } else {
-          draw(next, false);
+          const nextToken = requestTarget(next);
+          draw(next, false, nextToken);
           frame = next;
         }
       }
@@ -1645,10 +2197,10 @@ function setupWebpSequence(run: number): Runtime {
     if (animationHandle === null) animationHandle = requestAnimationFrame(tick);
   };
   const startClockFromFrame = (frame: number): void => {
-    if (loaded.has(frame)) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
+    if (cache.has(frame)) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
     else {
       startedAt = null;
-      loadOne(frame);
+      loadOne(frame, targetToken);
     }
   };
   const togglePlayback = (): void => {
@@ -1700,6 +2252,7 @@ function setupWebpSequence(run: number): Runtime {
   const resumeFromScrub = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
+    requestTarget(target);
     if (segmentedPlayback) {
       if (target >= LAST_FRAME) {
         segmentPhase = "intro";
@@ -1728,6 +2281,7 @@ function setupWebpSequence(run: number): Runtime {
   resumeAfterScrubRelease = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
+    requestTarget(target);
     if (segmentedPlayback) {
       if (target >= LAST_FRAME) {
         segmentPhase = "terminal";
@@ -1748,6 +2302,7 @@ function setupWebpSequence(run: number): Runtime {
   };
   const seek = (frame: number): void => {
     const target = Math.max(0, Math.min(LAST_FRAME, Math.round(frame)));
+    const token = requestTarget(target);
     if (segmentedPlayback) {
       segmentPhase = target <= INTRO_END_FRAME ? "waiting" : "main";
       metrics.segment = `manual seek · segment pause contract bypassed at frame ${target}`;
@@ -1757,8 +2312,8 @@ function setupWebpSequence(run: number): Runtime {
     }
     pendingSeek = { frame: target, startedAt: currentTime() };
     startedAt = null;
-    loadOne(target);
-    draw(target);
+    loadOne(target, token);
+    draw(target, true, token);
     recordEvent(`seek requested frame ${target}`);
   };
   const clickListener = (): void => {
@@ -1772,6 +2327,7 @@ function setupWebpSequence(run: number): Runtime {
   canvas.addEventListener("click", clickListener);
   playToggle.classList.remove("visible");
   playToggle.textContent = "Pause animation";
+  queueNeighborhood(handoffFrame);
   pump();
   startAnimation();
   return {
@@ -1786,7 +2342,9 @@ function setupWebpSequence(run: number): Runtime {
       canvas.removeEventListener("click", clickListener);
       if (animationHandle !== null) cancelAnimationFrame(animationHandle);
       if (loadPumpHandle !== null) cancelAnimationFrame(loadPumpHandle);
-      images.forEach((image) => image?.removeAttribute("src"));
+      inFlight.forEach(({ image }) => image.removeAttribute("src"));
+      inFlight.clear();
+      cache.clear();
       playToggle.classList.remove("visible");
     },
   };
@@ -1795,6 +2353,7 @@ function setupWebpSequence(run: number): Runtime {
 function nextFallback(variant: Variant): Variant | null {
   if (variant === "a") return "b";
   if (variant === "b") return "c";
+  if (variant === "h") return "c";
   return null;
 }
 
@@ -1831,6 +2390,7 @@ function startRenderer(variant: Variant, preservePlayback = false): void {
   let next: Runtime | null = null;
   if (variant === "a") next = setupNativeVp9(run);
   if (variant === "b") next = setupPackedH264(run);
+  if (variant === "h") next = setupHevcAlphaCandidate(run);
   if (next) {
     runtime = next;
     recordEvent(`active ${definition(variant).label}`);

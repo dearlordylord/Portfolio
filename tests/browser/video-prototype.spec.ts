@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { HEVC_PREPARATION_DEADLINE_MS } from "../../src/motion/hevc-alpha";
+
 function frameNumber(value: string | null): number {
   const match = value?.match(/frame\s+(\d+)/);
   return match ? Number(match[1]) : -1;
@@ -42,3 +44,53 @@ for (const variant of ["a", "c"] as const) {
     }
   });
 }
+
+test("H hybrid candidate falls back to C before exposing an unavailable HEVC asset", async ({ page }) => {
+  await page.goto("/prototype-video?variant=hybrid");
+
+  await expect(page.locator("#metric-requested")).toHaveText(/H · Safari HEVC alpha/);
+  await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/);
+  await expect(page.locator("#metric-hevc-gate")).toHaveText("asset-missing-import-apple-hevc-alpha");
+  await expect(page.locator("#metric-fallback")).toContainText("H asset-missing-import-apple-hevc-alpha");
+  await expect(page.locator("#media-stage canvas")).toBeVisible();
+  await expect(page.locator("#media-stage video")).toHaveCount(0);
+});
+
+test("H does not request an imported candidate without a manual asset/device evidence override", async ({ page }) => {
+  let requested = false;
+  page.on("request", (request) => {
+    if (request.resourceType() !== "fetch" && request.resourceType() !== "media") return;
+    if (new URL(request.url()).pathname.includes("/hero-hevc-alpha")) requested = true;
+  });
+
+  await page.goto("/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mp4&hevcAssetId=hero-hevc-alpha-v1");
+  await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/);
+  await expect.poll(() => requested).toBe(false);
+});
+
+test("manually enabled H shows a frame-0 poster and falls back after stalled preparation", async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function canPlayType(type: string): CanPlayTypeResult {
+      if (type.includes("hvc1")) return "probably";
+      return nativeCanPlayType.call(this, type);
+    };
+  });
+  await page.route("**/hero-hevc-alpha.mp4", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, HEVC_PREPARATION_DEADLINE_MS + 500));
+    await route.abort();
+  });
+
+  await page.goto(
+    "/prototype-video?variant=h&hevcSrc=/video-prototype/hero-hevc-alpha.mp4&hevcAssetId=hero-hevc-alpha-v1&hevcQualified=asset:hero-hevc-alpha-v1%7Cdevice:macos-safari",
+  );
+  await expect(page.locator("#media-stage .hero-render-poster")).toBeVisible();
+  await expect(page.locator("#media-stage canvas")).toHaveCount(0);
+  await expect(page.locator("#metric-hevc-prep")).toHaveText(/waiting.*4000 ms/);
+  await expect(page.locator("#metric-hevc-prep")).toHaveText(/timed out.*4000 ms/, {
+    timeout: HEVC_PREPARATION_DEADLINE_MS + 2_000,
+  });
+  await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/);
+  await expect(page.locator("#media-stage canvas")).toBeVisible();
+  await expect(page.locator("#media-stage .hero-render-poster")).toHaveCount(0);
+});

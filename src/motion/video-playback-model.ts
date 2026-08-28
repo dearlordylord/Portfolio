@@ -7,7 +7,7 @@
  * API or browser event ordering.
  */
 
-export type PlaybackRenderer = "a" | "b" | "c";
+export type PlaybackRenderer = "a" | "b" | "c" | "h";
 export type ActualPlayback = "paused" | "playing";
 
 export type PlaybackEvent =

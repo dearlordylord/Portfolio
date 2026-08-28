@@ -22,6 +22,7 @@ This is the canonical project note for motion work. Load this file before changi
 - `src/browser/` contains shallow DOM/canvas adapters and one `main.ts` entry. `index.html` contains structure and styles, not animation implementations.
 - One lifecycle scheduler owns animation frames, visibility, reduced motion, scene activation, and runnable-work metrics. Scenes do not self-schedule.
 - Hero frames and skill icons have pending/ready/failed state, named failures, deterministic fallback, and degraded diagnostics.
+- The video prototype keeps C’s decoded WebP neighborhood bounded with an explicit target → displayed → rendered coordinator. Its H Safari HEVC-with-alpha candidate is direct-DOM-only and requires an asset-bound manual evidence override before it can request or reveal media; that query override is not production trust, so H remains non-production until a checked-in asset/hash/device manifest exists. Otherwise it falls back to C. See [HEVC alpha import gate](./hevc-alpha-import.md).
 - Skills and particles use seeded fixed-step simulations. Mobile particles are disabled; desktop neighbor work is bounded rather than all-pairs.
 - Reduced motion exposes essential content immediately and schedules no decorative work.
 - Diagnostics require both a loopback host and `?motionDiagnostics=1`. `motionDisable=hero,particles,skills,timeline,contact` isolates named scenes for tests.
