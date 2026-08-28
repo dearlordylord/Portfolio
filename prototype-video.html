@@ -184,6 +184,13 @@
         object-position: center bottom;
         background: transparent;
       }
+      /*
+       * The H MOV is coded at 900×508 only to carry one transparent padding
+       * row. The stage already has definite dimensions and object-fit: cover,
+       * so the intrinsic video ratio does not size or shift the layout; this
+       * class records the visible 900×507 content ratio for the DOM candidate.
+       */
+      .hero-render-hevc { aspect-ratio: 900 / 507; }
       .hero-render-source { visibility: hidden; }
       .hero-render-canvas { visibility: visible; }
 
@@ -484,7 +491,7 @@
       <ol class="events" id="metric-events"></ol>
       <p class="events-title">Playback event tape</p>
       <ol class="events" id="metric-tape"></ol>
-      <p class="metric-note">A scrub captures its latest input, pauses/seeks, and requests resume immediately on pointer release or change; target presentation and later progress are observational gauges, not play gates. Explicit Pause is the only user pause. Approx transferred bytes estimate unique successfully loaded frame IDs (they do not shrink when C evicts a decoded frame); the decoded-frame metric is current bounded cache occupancy. C keeps a bounded decoded neighborhood; late frame loads cannot paint over a newer target. Try <code>quality=hq</code>, <code>forceFail=a</code>, <code>forceFail=b</code>, <code>forceFail=h</code>, <code>forceFail=webgl</code>, or <code>forceFail=a,b</code> to exercise fallback paths. VP9 and packed matte candidates use decoded pixel probes in addition to canPlayType. H requires a same-origin <code>hevcSrc=/path.mov</code>, <code>hevcAssetId=asset-id</code>, and an untrusted manual override such as <code>hevcQualified=asset:asset-id|device:macos-safari</code>; it shows only one static WebP frame while preparing, never uses canvas/WebGL alpha readback, and falls back to C before requesting or exposing an unqualified or timed-out candidate. A checked-in asset URL/hash/device manifest is still required before any production H use.</p>
+      <p class="metric-note">A scrub captures its latest input, pauses/seeks, and requests resume immediately on pointer release or change; target presentation and later progress are observational gauges, not play gates. Explicit Pause is the only user pause. Approx transferred bytes estimate unique successfully loaded frame IDs (they do not shrink when C evicts a decoded frame); the decoded-frame metric is current bounded cache occupancy. C keeps a bounded decoded neighborhood; late frame loads cannot paint over a newer target. Try <code>quality=hq</code>, <code>forceFail=a</code>, <code>forceFail=b</code>, <code>forceFail=h</code>, <code>forceFail=webgl</code>, or <code>forceFail=a,b</code> to exercise fallback paths. VP9 and packed matte candidates use decoded pixel probes in addition to canPlayType. H requires a same-origin <code>hevcSrc=/path.mov</code>, <code>hevcAssetId=asset-id</code>, and an untrusted manual override such as <code>hevcQualified=asset:asset-id|device:macos-safari</code>; it shows only one static WebP frame while preparing, never uses canvas/WebGL alpha readback, keeps the 900×507 content aspect while its MOV is coded at 900×508, and falls back to C before requesting or exposing an unqualified or timed-out candidate. A checked-in asset URL/hash/device manifest is still required before any production H use.</p>
     </aside>
 
     <div class="scrub">

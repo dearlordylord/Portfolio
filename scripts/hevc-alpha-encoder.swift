@@ -22,8 +22,21 @@ import VideoToolbox
 import Darwin
 #endif
 
+// The source/display contract is the supplied RGBA archive. The coded MOV
+// deliberately adds one cleared row at the bottom so every source pixel is
+// retained on Macs whose HEVC-alpha path rejects the odd 900x507 height.
+// `contentRect` below is expressed in top-left/display coordinates; the
+// bitmap context is shifted by `paddingRowCount` in its lower-left Quartz
+// coordinate system so the visual content remains in the same orientation as
+// the source renderer.
 private let sourceWidth = 900
 private let sourceHeight = 507
+private let encodedWidth = 900
+private let encodedHeight = 508
+private let paddingRowCount = 1
+private let paddingRowEdge = "bottom"
+private let paddingAlpha = "transparent"
+private let cleanAperture = "none"
 private let sourceFrameCount = 150
 private let sourceFrameRate = 15
 private let sourceInputPattern = "frame_%03d_delay-0.067s.webp"
@@ -176,9 +189,10 @@ private let usageText = """
 Usage: npm run prototype:encode:hevc-alpha -- [options]
 
 Reads the fixed 150-frame RGBA WebP archive (900x507 at 15 fps) and writes an
-Apple HEVC-with-alpha QuickTime MOV using AVFoundation. Defaults are intentionally staged
-under motion-artifacts/hevc-alpha/ (ignored by git), never public production
-assets.
+Apple HEVC-with-alpha QuickTime MOV using AVFoundation. The source/display
+content remains 900x507; the coded MOV is 900x508 with exactly one explicitly
+cleared transparent bottom row. Defaults are intentionally staged under
+motion-artifacts/hevc-alpha/ (ignored by git), never public production assets.
 
 Options:
   --input PATH                 frame directory (default: ./Кадры)
@@ -227,6 +241,8 @@ private struct InputSummary {
 private struct OutputValidation {
     let width: Int
     let height: Int
+    let codedWidth: Int
+    let codedHeight: Int
     let frameCount: Int
     let frameRate: Double
     let durationSeconds: Double
@@ -234,9 +250,20 @@ private struct OutputValidation {
     let containsAlphaChannel: Bool
     let decodedAlphaMinimum: UInt8
     let decodedAlphaMaximum: UInt8
+    let decodedContentAlphaMinimum: UInt8
+    let decodedContentAlphaMaximum: UInt8
+    let decodedPaddingAlphaMinimum: UInt8
+    let decodedPaddingAlphaMaximum: UInt8
 }
 
 private struct Manifest: Encodable {
+    struct ContentRect: Encodable {
+        let x: Int
+        let y: Int
+        let width: Int
+        let height: Int
+    }
+
     struct Source: Encodable {
         let inputPattern: String
         let sourceSetSha256: String
@@ -254,6 +281,13 @@ private struct Manifest: Encodable {
         let alphaQuality: Double
         let maxKeyframeInterval: Int
         let averageBitRate: Int
+        let codedWidth: Int
+        let codedHeight: Int
+        let contentRect: ContentRect
+        let paddingRowCount: Int
+        let paddingRowEdge: String
+        let paddingAlpha: String
+        let cleanAperture: String
     }
 
     struct Output: Encodable {
@@ -262,6 +296,13 @@ private struct Manifest: Encodable {
         let sha256: String
         let width: Int
         let height: Int
+        let codedWidth: Int
+        let codedHeight: Int
+        let contentRect: ContentRect
+        let paddingRowCount: Int
+        let paddingRowEdge: String
+        let paddingAlpha: String
+        let cleanAperture: String
         let frameCount: Int
         let frameRate: Int
         let durationSeconds: Double
@@ -269,6 +310,10 @@ private struct Manifest: Encodable {
         let containsAlphaChannel: Bool
         let decodedAlphaMinimum: Int
         let decodedAlphaMaximum: Int
+        let decodedContentAlphaMinimum: Int
+        let decodedContentAlphaMaximum: Int
+        let decodedPaddingAlphaMinimum: Int
+        let decodedPaddingAlphaMaximum: Int
     }
 
     let schemaVersion: Int
@@ -276,6 +321,16 @@ private struct Manifest: Encodable {
     let source: Source
     let encode: Encode
     let output: Output
+}
+
+// Pixel-buffer rows are addressed from the lower-left Quartz origin here.
+// The manifest's contentRect uses the conventional top-left/display origin:
+// x=0, y=0, width=900, height=507 with one transparent row at the bottom.
+private let encodedContentRows = paddingRowCount..<encodedHeight
+private let encodedPaddingRows = 0..<paddingRowCount
+
+private func manifestContentRect() -> Manifest.ContentRect {
+    Manifest.ContentRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight)
 }
 
 private func frameURL(index: Int, in directory: URL) -> URL {
@@ -340,15 +395,15 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
     let attributes: [String: Any] = [
         kCVPixelBufferCGImageCompatibilityKey as String: true,
         kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-        kCVPixelBufferWidthKey as String: sourceWidth,
-        kCVPixelBufferHeightKey as String: sourceHeight,
+        kCVPixelBufferWidthKey as String: encodedWidth,
+        kCVPixelBufferHeightKey as String: encodedHeight,
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
     ]
     var pixelBuffer: CVPixelBuffer?
     let createStatus = CVPixelBufferCreate(
         kCFAllocatorDefault,
-        sourceWidth,
-        sourceHeight,
+        encodedWidth,
+        encodedHeight,
         kCVPixelFormatType_32BGRA,
         attributes as CFDictionary,
         &pixelBuffer
@@ -371,8 +426,8 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
         | CGBitmapInfo.byteOrder32Little.rawValue
     guard let context = CGContext(
         data: baseAddress,
-        width: sourceWidth,
-        height: sourceHeight,
+        width: encodedWidth,
+        height: encodedHeight,
         bitsPerComponent: 8,
         bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
         space: colorSpace,
@@ -381,12 +436,22 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
         throw EncoderError.encoding("could not create BGRA bitmap context")
     }
     context.interpolationQuality = .high
-    context.draw(image, in: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
+    // Clearing the complete coded surface makes the padding guarantee
+    // explicit even if CoreVideo returns recycled memory. Draw only into the
+    // source content rect, leaving exactly one transparent bottom row.
+    context.clear(CGRect(x: 0, y: 0, width: encodedWidth, height: encodedHeight))
+    context.draw(
+        image,
+        in: CGRect(x: 0, y: paddingRowCount, width: sourceWidth, height: sourceHeight)
+    )
 
     let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
     let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
     var alphaRange = AlphaRange()
-    for row in 0..<sourceHeight {
+    // Keep the source alpha evidence separate from the synthetic padding row;
+    // otherwise an opaque source would appear to have transparency merely
+    // because the coded surface is padded.
+    for row in encodedContentRows {
         let rowBytes = bytes.advanced(by: row * bytesPerRow)
         for column in 0..<sourceWidth {
             alphaRange.include(rowBytes[column * 4 + 3])
@@ -402,13 +467,19 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
     return PixelBufferFrame(pixelBuffer: pixelBuffer, alphaRange: alphaRange)
 }
 
-private func decodedAlphaRange(from pixelBuffer: CVPixelBuffer) throws -> AlphaRange {
+private func decodedAlphaRange(
+    from pixelBuffer: CVPixelBuffer,
+    rows: Range<Int>
+) throws -> AlphaRange {
     guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else {
         throw EncoderError.validation("AVAssetReader did not return BGRA pixels for decoded alpha inspection")
     }
-    guard CVPixelBufferGetWidth(pixelBuffer) == sourceWidth,
-          CVPixelBufferGetHeight(pixelBuffer) == sourceHeight else {
-        throw EncoderError.validation("decoded pixel buffer dimensions do not match \(sourceWidth)x\(sourceHeight)")
+    guard CVPixelBufferGetWidth(pixelBuffer) == encodedWidth,
+          CVPixelBufferGetHeight(pixelBuffer) == encodedHeight else {
+        throw EncoderError.validation("decoded pixel buffer dimensions do not match \(encodedWidth)x\(encodedHeight)")
+    }
+    guard rows.lowerBound >= 0, rows.upperBound <= encodedHeight, !rows.isEmpty else {
+        throw EncoderError.validation("decoded alpha inspection row range is outside the coded surface")
     }
 
     let lockStatus = CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -423,9 +494,9 @@ private func decodedAlphaRange(from pixelBuffer: CVPixelBuffer) throws -> AlphaR
     let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
     let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
     var range = AlphaRange()
-    for row in 0..<sourceHeight {
+    for row in rows {
         let rowBytes = bytes.advanced(by: row * bytesPerRow)
-        for column in 0..<sourceWidth {
+        for column in 0..<encodedWidth {
             range.include(rowBytes[column * 4 + 3])
         }
     }
@@ -469,8 +540,8 @@ private func compressionSettings(options: Options) -> [String: Any] {
 private func outputSettings(options: Options) -> [String: Any] {
     [
         AVVideoCodecKey: AVVideoCodecType.hevcWithAlpha,
-        AVVideoWidthKey: sourceWidth,
-        AVVideoHeightKey: sourceHeight,
+        AVVideoWidthKey: encodedWidth,
+        AVVideoHeightKey: encodedHeight,
         AVVideoCompressionPropertiesKey: compressionSettings(options: options),
     ]
 }
@@ -504,8 +575,8 @@ private func makeWriter(at url: URL, options: Options) throws -> WriterBundle {
 
     let pixelAttributes: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: sourceWidth,
-        kCVPixelBufferHeightKey as String: sourceHeight,
+        kCVPixelBufferWidthKey as String: encodedWidth,
+        kCVPixelBufferHeightKey as String: encodedHeight,
         kCVPixelBufferCGImageCompatibilityKey as String: true,
         kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
     ]
@@ -528,6 +599,7 @@ private func encode(urls: [URL], options: Options) throws -> InputSummary {
             bundle?.writer.cancelWriting()
             try? FileManager.default.removeItem(at: options.outputURL)
         }
+        cleanupWriterSidecars(for: options.outputURL)
     }
 
     let configured = try makeWriter(at: options.outputURL, options: options)
@@ -603,8 +675,8 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
 
     let width = Int(abs(track.naturalSize.width).rounded())
     let height = Int(abs(track.naturalSize.height).rounded())
-    guard width == sourceWidth, height == sourceHeight else {
-        throw EncoderError.validation("dimensions are \(width)x\(height); expected \(sourceWidth)x\(sourceHeight)")
+    guard width == encodedWidth, height == encodedHeight else {
+        throw EncoderError.validation("dimensions are \(width)x\(height); expected coded \(encodedWidth)x\(encodedHeight)")
     }
 
     let duration = CMTimeGetSeconds(asset.duration)
@@ -613,10 +685,8 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
         throw EncoderError.validation("duration is \(duration)s; expected \(expectedDuration)s")
     }
 
-    // AVAssetTrack exposes this legacy collection as [Any] on the target SDK,
-    // while every entry is contractually a CMFormatDescription. A conditional
-    // Core Foundation cast is rejected by Swift because it always succeeds;
-    // recover the declared element type explicitly at this API boundary.
+    // On the selected macOS SDK this API is declared as [CMFormatDescription].
+    // Keep the explicit bridge for older SDK overlays that expose [Any].
     let descriptions = track.formatDescriptions.map { $0 as! CMFormatDescription }
     let codecTypes = descriptions.map(CMFormatDescriptionGetMediaSubType)
     let hasHEVCCodec = codecTypes.contains {
@@ -639,8 +709,8 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
     // expose an alpha-bearing BGRA buffer, validation fails closed.
     let readerOutputSettings: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: sourceWidth,
-        kCVPixelBufferHeightKey as String: sourceHeight,
+        kCVPixelBufferWidthKey as String: encodedWidth,
+        kCVPixelBufferHeightKey as String: encodedHeight,
     ]
     let readerOutput = AVAssetReaderTrackOutput(track: track, outputSettings: readerOutputSettings)
     guard reader.canAdd(readerOutput) else {
@@ -652,11 +722,24 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
     }
     var sampleCount = 0
     var decodedAlpha = AlphaRange()
+    var decodedContentAlpha = AlphaRange()
+    var decodedPaddingAlpha = AlphaRange()
     while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             throw EncoderError.validation("decoded sample \(sampleCount) has no image buffer")
         }
-        decodedAlpha.merge(try decodedAlphaRange(from: imageBuffer))
+        let fullRange = try decodedAlphaRange(from: imageBuffer, rows: 0..<encodedHeight)
+        let contentRange = try decodedAlphaRange(from: imageBuffer, rows: encodedContentRows)
+        let paddingRange = try decodedAlphaRange(from: imageBuffer, rows: encodedPaddingRows)
+        guard paddingRange.minimum == 0, paddingRange.maximum == 0 else {
+            throw EncoderError.validation(
+                "decoded padding row is not fully transparent in sample \(sampleCount) "
+                    + "(alpha \(paddingRange.minimum)...\(paddingRange.maximum))"
+            )
+        }
+        decodedAlpha.merge(fullRange)
+        decodedContentAlpha.merge(contentRange)
+        decodedPaddingAlpha.merge(paddingRange)
         sampleCount += 1
         if sampleCount > sourceFrameCount {
             throw EncoderError.validation("sample count exceeds \(sourceFrameCount)")
@@ -668,10 +751,19 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
         )
     }
     guard decodedAlpha.minimum < 255 else {
-        throw EncoderError.validation("decoded output alpha is fully opaque")
+        throw EncoderError.validation("decoded coded-surface alpha is fully opaque")
     }
     guard decodedAlpha.maximum > 0 else {
-        throw EncoderError.validation("decoded output alpha is fully transparent")
+        throw EncoderError.validation("decoded coded-surface alpha is fully transparent")
+    }
+    guard decodedContentAlpha.minimum < 255 else {
+        throw EncoderError.validation("decoded content alpha is fully opaque")
+    }
+    guard decodedContentAlpha.maximum > 0 else {
+        throw EncoderError.validation("decoded content alpha is fully transparent")
+    }
+    guard decodedPaddingAlpha.minimum == 0, decodedPaddingAlpha.maximum == 0 else {
+        throw EncoderError.validation("decoded padding row is not transparent in every sample")
     }
 
     let nominalFrameRate = Double(track.nominalFrameRate)
@@ -683,13 +775,19 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
     return OutputValidation(
         width: width,
         height: height,
+        codedWidth: width,
+        codedHeight: height,
         frameCount: sampleCount,
         frameRate: measuredFrameRate,
         durationSeconds: duration,
         codec: codec,
         containsAlphaChannel: containsAlpha,
         decodedAlphaMinimum: decodedAlpha.minimum,
-        decodedAlphaMaximum: decodedAlpha.maximum
+        decodedAlphaMaximum: decodedAlpha.maximum,
+        decodedContentAlphaMinimum: decodedContentAlpha.minimum,
+        decodedContentAlphaMaximum: decodedContentAlpha.maximum,
+        decodedPaddingAlphaMinimum: decodedPaddingAlpha.minimum,
+        decodedPaddingAlphaMaximum: decodedPaddingAlpha.maximum
     )
 }
 
@@ -736,7 +834,14 @@ private func writeManifest(
             alphaMode: "premultiplied",
             alphaQuality: Double(options.alphaQuality),
             maxKeyframeInterval: options.keyframeInterval,
-            averageBitRate: options.bitrate
+            averageBitRate: options.bitrate,
+            codedWidth: encodedWidth,
+            codedHeight: encodedHeight,
+            contentRect: manifestContentRect(),
+            paddingRowCount: paddingRowCount,
+            paddingRowEdge: paddingRowEdge,
+            paddingAlpha: paddingAlpha,
+            cleanAperture: cleanAperture
         ),
         output: .init(
             fileName: options.outputURL.lastPathComponent,
@@ -744,13 +849,24 @@ private func writeManifest(
             sha256: digest,
             width: validation.width,
             height: validation.height,
+            codedWidth: validation.codedWidth,
+            codedHeight: validation.codedHeight,
+            contentRect: manifestContentRect(),
+            paddingRowCount: paddingRowCount,
+            paddingRowEdge: paddingRowEdge,
+            paddingAlpha: paddingAlpha,
+            cleanAperture: cleanAperture,
             frameCount: validation.frameCount,
             frameRate: sourceFrameRate,
             durationSeconds: rounded(validation.durationSeconds),
             codec: validation.codec,
             containsAlphaChannel: validation.containsAlphaChannel,
             decodedAlphaMinimum: Int(validation.decodedAlphaMinimum),
-            decodedAlphaMaximum: Int(validation.decodedAlphaMaximum)
+            decodedAlphaMaximum: Int(validation.decodedAlphaMaximum),
+            decodedContentAlphaMinimum: Int(validation.decodedContentAlphaMinimum),
+            decodedContentAlphaMaximum: Int(validation.decodedContentAlphaMaximum),
+            decodedPaddingAlphaMinimum: Int(validation.decodedPaddingAlphaMinimum),
+            decodedPaddingAlphaMaximum: Int(validation.decodedPaddingAlphaMaximum)
         )
     )
     let encoder = JSONEncoder()
@@ -771,6 +887,34 @@ private func isInside(_ child: URL, _ parent: URL) -> Bool {
     let childPath = child.standardizedFileURL.path
     let parentPath = parent.standardizedFileURL.path
     return childPath == parentPath || childPath.hasPrefix(parentPath + "/")
+}
+
+/// AVAssetWriter may leave a sideband file beside a MOV while it is being
+/// authored. Remove only files belonging to this exact output basename in its
+/// exact staging directory. In particular, do not glob a broad .sb-* pattern
+/// or recurse: unrelated candidates may be present beside the requested output.
+private func cleanupWriterSidecars(for outputURL: URL) {
+    let fileManager = FileManager.default
+    let directory = outputURL.deletingLastPathComponent().standardizedFileURL
+    guard fileManager.fileExists(atPath: directory.path),
+          let entries = try? fileManager.contentsOfDirectory(
+              at: directory,
+              includingPropertiesForKeys: [.isRegularFileKey],
+              options: []
+          ) else {
+        return
+    }
+    let exactPrefix = "\(outputURL.lastPathComponent).sb-"
+    for entry in entries {
+        guard entry.deletingLastPathComponent().standardizedFileURL == directory,
+              entry.lastPathComponent.hasPrefix(exactPrefix),
+              entry.lastPathComponent.count > exactPrefix.count,
+              let values = try? entry.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else {
+            continue
+        }
+        try? fileManager.removeItem(at: entry)
+    }
 }
 
 private func preparePaths(options: Options) throws {
@@ -807,6 +951,7 @@ private func preparePaths(options: Options) throws {
             at: options.manifestURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        cleanupWriterSidecars(for: options.outputURL)
         if FileManager.default.fileExists(atPath: options.outputURL.path) {
             guard options.force else {
                 throw EncoderError.usage("output exists; pass --force to replace exactly \(options.outputURL.path)")
@@ -823,10 +968,11 @@ private func preparePaths(options: Options) throws {
 }
 
 private func checkWriterCapability(options: Options, at url: URL) throws {
-    let bundle = try makeWriter(at: url, options: options)
-    bundle.input.markAsFinished()
-    bundle.writer.cancelWriting()
+    // Capability probing must leave AVAssetWriter in the unknown state: it
+    // must not finish or cancel a writer that has not started writing.
+    _ = try makeWriter(at: url, options: options)
     try? FileManager.default.removeItem(at: url)
+    cleanupWriterSidecars(for: url)
 }
 
 private func printNextSteps(options: Options, digest: String, sourceSetSHA256: String, bytes: Int) {
@@ -851,6 +997,10 @@ private func printNextSteps(options: Options, digest: String, sourceSetSHA256: S
 
 private func run(options: Options) throws {
     try preparePaths(options: options)
+    // Treat every invocation as a startup boundary. The helper is deliberately
+    // basename-scoped and non-recursive, so this cannot remove another asset's
+    // writer sideband file.
+    cleanupWriterSidecars(for: options.outputURL)
     let urls = try frameURLs(in: options.inputDirectory)
     let sourceSetSHA256 = try orderedSourceSetSHA256(urls: urls)
     let temporaryWriterURL = FileManager.default.temporaryDirectory
@@ -862,6 +1012,8 @@ private func run(options: Options) throws {
         print("HEVC-alpha dry-run passed")
         print("Input: \(options.inputDirectory.path)")
         print("Frames: \(sourceFrameCount) at \(sourceFrameRate) fps (\(Double(sourceFrameCount) / Double(sourceFrameRate))s)")
+        print("Source/display content: \(sourceWidth)x\(sourceHeight)")
+        print("Coded MOV: \(encodedWidth)x\(encodedHeight), padding \(paddingRowCount) \(paddingRowEdge) row (\(paddingAlpha))")
         print("Input alpha range: \(summary.minimumAlpha)...\(summary.maximumAlpha)")
         print("Ordered source-set SHA-256: \(sourceSetSHA256)")
         print("AVAssetWriter: canApply hevcWithAlpha + alpha settings")
@@ -885,12 +1037,24 @@ private func run(options: Options) throws {
             sourceSetSHA256: sourceSetSHA256,
             options: options
         )
+        cleanupWriterSidecars(for: options.outputURL)
         print("HEVC-alpha encode and AVFoundation validation passed")
-        print("Validated: \(validation.width)x\(validation.height), \(validation.frameCount) samples, \(validation.frameRate) fps, \(validation.durationSeconds)s, codec \(validation.codec), containsAlphaChannel=true, decoded alpha \(validation.decodedAlphaMinimum)...\(validation.decodedAlphaMaximum)")
+        print(
+            "Validated: coded \(validation.codedWidth)x\(validation.codedHeight), "
+                + "content \(sourceWidth)x\(sourceHeight), "
+                + "\(validation.frameCount) samples, \(validation.frameRate) fps, "
+                + "\(validation.durationSeconds)s, codec \(validation.codec), "
+                + "containsAlphaChannel=true, decoded alpha "
+                + "\(validation.decodedAlphaMinimum)...\(validation.decodedAlphaMaximum), "
+                + "content alpha \(validation.decodedContentAlphaMinimum)..."
+                + "\(validation.decodedContentAlphaMaximum), padding alpha "
+                + "\(validation.decodedPaddingAlphaMinimum)...\(validation.decodedPaddingAlphaMaximum)"
+        )
         printNextSteps(options: options, digest: result.digest, sourceSetSHA256: sourceSetSHA256, bytes: result.bytes)
     } catch {
         try? FileManager.default.removeItem(at: options.outputURL)
         try? FileManager.default.removeItem(at: options.manifestURL)
+        cleanupWriterSidecars(for: options.outputURL)
         throw error
     }
 }

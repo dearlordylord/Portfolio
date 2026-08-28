@@ -1,12 +1,19 @@
 /**
  * PROTOTYPE-ONLY contract shared by the macOS encoder documentation and
  * Linux-runnable tests. The values describe the supplied RGBA WebP archive;
- * the Swift encoder deliberately keeps these source dimensions fixed.
+ * the Swift encoder deliberately keeps these source/display dimensions fixed
+ * and codes them into a 900x508 surface with one transparent bottom row.
  */
 
 export const HEVC_ENCODER_DEFAULTS = {
-  width: 900,
-  height: 507,
+  sourceWidth: 900,
+  sourceHeight: 507,
+  codedWidth: 900,
+  codedHeight: 508,
+  paddingRowCount: 1,
+  paddingRowEdge: "bottom",
+  paddingAlpha: "transparent",
+  cleanAperture: "none",
   frameCount: 150,
   frameRate: 15,
   keyframeInterval: 15,
@@ -19,8 +26,14 @@ export const HEVC_ENCODER_DEFAULTS = {
 } as const;
 
 export type HevcEncoderConfig = {
-  width: number;
-  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  codedWidth: number;
+  codedHeight: number;
+  paddingRowCount: number;
+  paddingRowEdge: string;
+  paddingAlpha: string;
+  cleanAperture: string;
   frameCount: number;
   frameRate: number;
   keyframeInterval: number;
@@ -57,6 +70,18 @@ export type HevcEncoderManifest = Readonly<{
     alphaQuality: number;
     maxKeyframeInterval: number;
     averageBitRate: number;
+    codedWidth: number;
+    codedHeight: number;
+    contentRect: Readonly<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+    paddingRowCount: number;
+    paddingRowEdge: string;
+    paddingAlpha: string;
+    cleanAperture: string;
   }>;
   output: Readonly<{
     fileName: string;
@@ -64,6 +89,18 @@ export type HevcEncoderManifest = Readonly<{
     sha256: string;
     width: number;
     height: number;
+    codedWidth: number;
+    codedHeight: number;
+    contentRect: Readonly<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+    paddingRowCount: number;
+    paddingRowEdge: string;
+    paddingAlpha: string;
+    cleanAperture: string;
     frameCount: number;
     frameRate: number;
     durationSeconds: number;
@@ -71,6 +108,10 @@ export type HevcEncoderManifest = Readonly<{
     containsAlphaChannel: boolean;
     decodedAlphaMinimum: number;
     decodedAlphaMaximum: number;
+    decodedContentAlphaMinimum: number;
+    decodedContentAlphaMaximum: number;
+    decodedPaddingAlphaMinimum: number;
+    decodedPaddingAlphaMaximum: number;
   }>;
 }>;
 
@@ -111,9 +152,16 @@ export function validateHevcEncoderConfig(
   const config: Record<string, unknown> = { ...HEVC_ENCODER_DEFAULTS, ...overrides };
   const errors: string[] = [];
 
-  for (const key of ["width", "height", "frameCount"] as const) {
+  for (const key of [
+    "sourceWidth",
+    "sourceHeight",
+    "codedWidth",
+    "codedHeight",
+    "paddingRowCount",
+    "frameCount",
+  ] as const) {
     if (!integer(config[key]) || (config[key] as number) <= 0) {
-      errors.push(`${key} must be a positive integer`);
+      errors.push(String(key) + " must be a positive integer");
     }
   }
   if (!finite(config.frameRate) || (config.frameRate as number) <= 0) {
@@ -133,11 +181,41 @@ export function validateHevcEncoderConfig(
   if (!integer(config.averageBitRate) || (config.averageBitRate as number) <= 0) {
     errors.push("averageBitRate must be a positive integer");
   }
+  if (config.paddingRowEdge !== HEVC_ENCODER_DEFAULTS.paddingRowEdge) {
+    errors.push("paddingRowEdge must be bottom");
+  }
+  if (config.paddingAlpha !== HEVC_ENCODER_DEFAULTS.paddingAlpha) {
+    errors.push("paddingAlpha must be transparent");
+  }
+  if (config.cleanAperture !== HEVC_ENCODER_DEFAULTS.cleanAperture) {
+    errors.push("cleanAperture must be none");
+  }
+  if (
+    integer(config.sourceWidth)
+    && integer(config.codedWidth)
+    && config.sourceWidth !== config.codedWidth
+  ) {
+    errors.push("codedWidth must preserve sourceWidth");
+  }
+  if (
+    integer(config.sourceHeight)
+    && integer(config.codedHeight)
+    && integer(config.paddingRowCount)
+    && config.codedHeight !== (config.sourceHeight as number) + (config.paddingRowCount as number)
+  ) {
+    errors.push("codedHeight must equal sourceHeight plus paddingRowCount");
+  }
 
   // The source archive and the Apple writer choices are intentionally fixed
   // so a manifest cannot silently describe a different input contract.
-  addExactError(errors, config, "width", HEVC_ENCODER_DEFAULTS.width);
-  addExactError(errors, config, "height", HEVC_ENCODER_DEFAULTS.height);
+  addExactError(errors, config, "sourceWidth", HEVC_ENCODER_DEFAULTS.sourceWidth);
+  addExactError(errors, config, "sourceHeight", HEVC_ENCODER_DEFAULTS.sourceHeight);
+  addExactError(errors, config, "codedWidth", HEVC_ENCODER_DEFAULTS.codedWidth);
+  addExactError(errors, config, "codedHeight", HEVC_ENCODER_DEFAULTS.codedHeight);
+  addExactError(errors, config, "paddingRowCount", HEVC_ENCODER_DEFAULTS.paddingRowCount);
+  addExactError(errors, config, "paddingRowEdge", HEVC_ENCODER_DEFAULTS.paddingRowEdge);
+  addExactError(errors, config, "paddingAlpha", HEVC_ENCODER_DEFAULTS.paddingAlpha);
+  addExactError(errors, config, "cleanAperture", HEVC_ENCODER_DEFAULTS.cleanAperture);
   addExactError(errors, config, "frameCount", HEVC_ENCODER_DEFAULTS.frameCount);
   addExactError(errors, config, "frameRate", HEVC_ENCODER_DEFAULTS.frameRate);
   addExactError(errors, config, "alphaMode", HEVC_ENCODER_DEFAULTS.alphaMode);
@@ -157,9 +235,15 @@ function closeToExpected(value: unknown, expected: number): boolean {
 }
 
 function hasExpectedSource(source: Record<string, unknown>, errors: string[]): void {
-  for (const key of ["inputPattern", "width", "height", "frameCount", "frameRate"] as const) {
-    if (source[key] !== HEVC_ENCODER_DEFAULTS[key]) {
-      errors.push(`source.${key} does not match the supplied frame archive`);
+  for (const [key, expected] of [
+    ["inputPattern", HEVC_ENCODER_DEFAULTS.inputPattern],
+    ["width", HEVC_ENCODER_DEFAULTS.sourceWidth],
+    ["height", HEVC_ENCODER_DEFAULTS.sourceHeight],
+    ["frameCount", HEVC_ENCODER_DEFAULTS.frameCount],
+    ["frameRate", HEVC_ENCODER_DEFAULTS.frameRate],
+  ] as const) {
+    if (source[key] !== expected) {
+      errors.push("source." + key + " does not match the supplied frame archive");
     }
   }
   if (typeof source.sourceSetSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(source.sourceSetSha256)) {
@@ -167,6 +251,44 @@ function hasExpectedSource(source: Record<string, unknown>, errors: string[]): v
   }
   if (!closeToExpected(source.durationSeconds, expectedHevcDurationSeconds())) {
     errors.push("source.durationSeconds does not match frameCount / frameRate");
+  }
+}
+
+function hasExpectedGeometry(
+  owner: Record<string, unknown>,
+  path: string,
+  errors: string[],
+): void {
+  if (owner.codedWidth !== HEVC_ENCODER_DEFAULTS.codedWidth) {
+    errors.push(path + ".codedWidth must be " + HEVC_ENCODER_DEFAULTS.codedWidth);
+  }
+  if (owner.codedHeight !== HEVC_ENCODER_DEFAULTS.codedHeight) {
+    errors.push(path + ".codedHeight must be " + HEVC_ENCODER_DEFAULTS.codedHeight + " (900x506 is not supported)");
+  }
+  if (!isRecord(owner.contentRect)) {
+    errors.push(path + ".contentRect must be an object");
+  } else {
+    const rect = owner.contentRect;
+    if (
+      rect.x !== 0
+      || rect.y !== 0
+      || rect.width !== HEVC_ENCODER_DEFAULTS.sourceWidth
+      || rect.height !== HEVC_ENCODER_DEFAULTS.sourceHeight
+    ) {
+      errors.push(path + ".contentRect must be x0 y0 w900 h507");
+    }
+  }
+  if (owner.paddingRowCount !== HEVC_ENCODER_DEFAULTS.paddingRowCount) {
+    errors.push(path + ".paddingRowCount must be 1");
+  }
+  if (owner.paddingRowEdge !== HEVC_ENCODER_DEFAULTS.paddingRowEdge) {
+    errors.push(path + ".paddingRowEdge must be bottom");
+  }
+  if (owner.paddingAlpha !== HEVC_ENCODER_DEFAULTS.paddingAlpha) {
+    errors.push(path + ".paddingAlpha must be transparent");
+  }
+  if (owner.cleanAperture !== HEVC_ENCODER_DEFAULTS.cleanAperture) {
+    errors.push(path + ".cleanAperture must be none");
   }
 }
 
@@ -204,6 +326,7 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     if (!integer(manifest.encode.maxKeyframeInterval) || manifest.encode.maxKeyframeInterval <= 0 || manifest.encode.maxKeyframeInterval > HEVC_ENCODER_DEFAULTS.frameCount) {
       errors.push("encode.maxKeyframeInterval must be a positive interval within the source frame count");
     }
+    hasExpectedGeometry(manifest.encode, "encode", errors);
   }
 
   if (!isRecord(manifest.output)) {
@@ -217,9 +340,15 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     if (typeof output.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(output.sha256)) {
       errors.push("output.sha256 must be a 64-character hexadecimal digest");
     }
-    for (const key of ["width", "height", "frameCount", "frameRate"] as const) {
-      if (output[key] !== HEVC_ENCODER_DEFAULTS[key]) errors.push(`output.${key} does not match the encoder contract`);
+    for (const [key, expected] of [
+      ["width", HEVC_ENCODER_DEFAULTS.codedWidth],
+      ["height", HEVC_ENCODER_DEFAULTS.codedHeight],
+      ["frameCount", HEVC_ENCODER_DEFAULTS.frameCount],
+      ["frameRate", HEVC_ENCODER_DEFAULTS.frameRate],
+    ] as const) {
+      if (output[key] !== expected) errors.push("output." + key + " does not match the encoder contract");
     }
+    hasExpectedGeometry(output, "output", errors);
     if (!closeToExpected(output.durationSeconds, expectedHevcDurationSeconds())) {
       errors.push("output.durationSeconds does not match the encoder contract");
     }
@@ -241,6 +370,22 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
       && (output.decodedAlphaMinimum as number) >= (output.decodedAlphaMaximum as number)
     ) {
       errors.push("decoded output alpha must contain both transparent and visible values");
+    }
+    if (!integer(output.decodedContentAlphaMinimum) || output.decodedContentAlphaMinimum < 0 || output.decodedContentAlphaMinimum > 255) {
+      errors.push("output.decodedContentAlphaMinimum must be an 8-bit alpha value");
+    }
+    if (!integer(output.decodedContentAlphaMaximum) || output.decodedContentAlphaMaximum < 0 || output.decodedContentAlphaMaximum > 255) {
+      errors.push("output.decodedContentAlphaMaximum must be an 8-bit alpha value");
+    }
+    if (
+      integer(output.decodedContentAlphaMinimum)
+      && integer(output.decodedContentAlphaMaximum)
+      && (output.decodedContentAlphaMinimum as number) >= (output.decodedContentAlphaMaximum as number)
+    ) {
+      errors.push("decoded content alpha must contain both transparent and visible values");
+    }
+    if (output.decodedPaddingAlphaMinimum !== 0 || output.decodedPaddingAlphaMaximum !== 0) {
+      errors.push("output.decodedPaddingAlphaMinimum/Maximum must both be 0 for every transparent padding row");
     }
   }
 

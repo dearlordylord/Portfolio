@@ -82,6 +82,13 @@ const HEVC_BYTES = 0;
 const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-v1";
 const SOURCE_WIDTH = 900;
 const SOURCE_HEIGHT = 507;
+// H's Apple-coded MOV adds one transparent bottom row. C remains a
+// source/display-sized 900x507 WebP canvas; H diagnostics and layout retain
+// that content aspect ratio instead of treating the 900x508 coded surface as
+// the visible artwork bounds.
+const HEVC_CODED_WIDTH = 900;
+const HEVC_CODED_HEIGHT = 508;
+const HEVC_CONTENT_ASPECT_RATIO = SOURCE_WIDTH / SOURCE_HEIGHT;
 const HQ_WIDTH = 1280;
 const HQ_HEIGHT = 720;
 const PACKED_WIDTH = 1800;
@@ -561,7 +568,11 @@ function updateMediaMetrics(video: HTMLVideoElement, resolutionFallback: string)
   const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null;
   if (duration !== null) metrics.durationSeconds = duration;
   if (video.videoWidth > 0 && video.videoHeight > 0) {
-    metrics.resolution = `${video.videoWidth}×${video.videoHeight}`;
+    const contentWidth = Number(video.dataset.contentWidth);
+    const contentHeight = Number(video.dataset.contentHeight);
+    metrics.resolution = Number.isFinite(contentWidth) && Number.isFinite(contentHeight)
+      ? `${contentWidth}×${contentHeight} content · coded ${video.videoWidth}×${video.videoHeight}`
+      : `${video.videoWidth}×${video.videoHeight}`;
   } else if (metrics.resolution === "—") {
     metrics.resolution = resolutionFallback;
   }
@@ -1150,7 +1161,7 @@ function setupHevcAlphaCandidate(run: number): Runtime | null {
   preparationPoster.setAttribute("aria-hidden", "true");
 
   const video = document.createElement("video");
-  video.className = "hero-render hero-render-source";
+  video.className = "hero-render hero-render-source hero-render-hevc";
   video.autoplay = false;
   video.defaultMuted = true;
   video.muted = true;
@@ -1162,6 +1173,11 @@ function setupHevcAlphaCandidate(run: number): Runtime | null {
   video.setAttribute("muted", "");
   video.setAttribute("aria-hidden", "true");
   video.dataset.renderer = "hevc-alpha-dom";
+  video.dataset.contentWidth = String(SOURCE_WIDTH);
+  video.dataset.contentHeight = String(SOURCE_HEIGHT);
+  video.dataset.contentAspectRatio = String(HEVC_CONTENT_ASPECT_RATIO);
+  video.dataset.codedWidth = String(HEVC_CODED_WIDTH);
+  video.dataset.codedHeight = String(HEVC_CODED_HEIGHT);
   video.dataset.qualification = hevcQualificationEvidence ?? "unqualified";
   video.style.visibility = "hidden";
   mediaStage.replaceChildren(preparationPoster, video);

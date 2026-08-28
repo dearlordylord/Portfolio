@@ -18,9 +18,12 @@ npm run prototype:encode:hevc-alpha -- --dry-run
 
 The dry-run decodes all 150 `Кадры/frame_%03d_delay-0.067s.webp` images with
 ImageIO, requires a real alpha channel and both transparent and visible pixels,
-checks their fixed `900×507` dimensions, and asks AVAssetWriter whether it can
-apply `AVVideoCodecType.hevcWithAlpha` plus the configured alpha properties. It
-writes no media or manifest. The actual export is:
+checks their fixed source/display `900×507` dimensions, and asks AVAssetWriter
+whether it can apply `AVVideoCodecType.hevcWithAlpha` plus the configured alpha
+properties. The coded MOV is `900×508`: its `contentRect` is exactly
+`x=0,y=0,width=900,height=507`, followed by one explicitly cleared transparent
+bottom row. No source pixel is cropped, no `900×506` output is accepted, and no
+clean aperture is written. The dry-run writes no media or manifest. The actual export is:
 
 ```sh
 npm run prototype:encode:hevc-alpha -- --force
@@ -42,13 +45,20 @@ It has no ffmpeg, Homebrew, or Compressor dependency. On non-macOS hosts the
 wrapper exits with an explicit error and writes nothing. It also refuses a
 non-staging repository path unless `--allow-tracked-output` is supplied. A
 successful export is validated again through AVFoundation for one HEVC video
-track, `900×507`, 150 samples, 15 fps, 10 seconds, and the selected track's
-`containsAlphaChannel` characteristic. It then decodes every sample through
-`AVAssetReaderTrackOutput` as BGRA and requires the decoded alpha range to
-contain both transparent and visible values; the measured minimum and maximum
-are recorded in the manifest. A writer rejection, missing/opaque input alpha,
-failed sample/decoded-alpha validation, or manifest/SHA failure deletes the
-partial staging output and exits nonzero.
+track, coded `900×508` with the source content contract above, 150 samples,
+15 fps, 10 seconds, and the selected track's `containsAlphaChannel`
+characteristic. It then decodes every sample through `AVAssetReaderTrackOutput`
+as BGRA at `900×508`, checks the full coded alpha range and content-only range,
+and requires the designated padding row to be alpha `0` for every decoded
+sample. The measured coded/content/padding alpha ranges are recorded in the
+manifest. A writer rejection, missing/opaque input alpha, failed
+sample/decoded-alpha validation, or manifest/SHA failure deletes the partial
+staging output and exits nonzero.
+
+The command also cleans AVAssetWriter sidecars only when their names begin with
+the exact requested MOV basename plus `.sb-` in that MOV's immediate staging
+directory. It performs that narrow cleanup at startup, after a failed write,
+and after success; unrelated `.sb-` files and nested paths are left untouched.
 
 The command emits a deterministic JSON sidecar beside the MOV containing the
 source/encode settings, average bitrate, ordered source-set SHA-256 (each
@@ -71,12 +81,15 @@ sidecar shape and fixed source/output contract. It intentionally cannot certify
 Apple encoding or browser alpha behavior; only AVFoundation validation plus the
 real-device evidence can do that.
 
-The supplied archive is exactly `900×507`; its odd height is an explicit Apple
-hardware/profile capability uncertainty. The command and dry-run retain that
-geometry and fail closed if the selected Mac encoder rejects it. We will add a
-transparent-row padding step only after an actual hardware rejection is
-observed, with a corresponding geometry decision; the encoder never silently
-changes the source dimensions.
+The supplied archive is exactly `900×507`. On the measured M2 Max/macOS 15.6
+authoring path, the geometry decision is to preserve every source pixel in a
+`900×508` coded surface with exactly one explicit transparent bottom row. The
+source/display content remains `900×507`; the manifest records both geometries,
+the `contentRect`, `paddingRowCount=1`, `paddingRowEdge=bottom`,
+`paddingAlpha=transparent`, and `cleanAperture=none`. The encoder does not crop
+to `900×506`, silently rescale, or add a clean aperture. Other Macs/SDKs still
+must pass the AVFoundation writer and decoded-row checks; a capability failure
+is reported rather than changing the contract.
 
 ## Required authoring pipeline
 
@@ -103,6 +116,12 @@ this prototype). The H renderer
 downloads a Blob in the prototype because Pages currently answers static
 video range requests with `200`; the Blob gives the hidden candidate a local
 seekable timeline.
+
+The H DOM element is laid out in the existing definite-size hero stage with
+`object-fit: cover`; its intrinsic coded height therefore does not size the
+stage. The diagnostic resolution intentionally reports `900×507 content ·
+coded 900×508`, and the `aspect-ratio: 900 / 507` class documents the visible
+artwork contract. C's canvas remains exactly `900×507`.
 
 ## Runtime gate
 
