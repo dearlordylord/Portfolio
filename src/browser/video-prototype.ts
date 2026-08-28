@@ -75,10 +75,10 @@ const WEBM_BYTES = 2_238_324;
 const MP4_BYTES = 1_839_215;
 const HQ_WEBM_BYTES = 0;
 const HQ_MP4_BYTES = 1_796_188;
-// Deliberately zero until an Apple-authoring pipeline supplies a compliant
-// HEVC-with-alpha QuickTime file. `hevcSrc=/same-origin/path.mov` enables a real-device
-// import without allowing an unreviewed cross-origin asset into the gate.
-const HEVC_BYTES = 0;
+// Exact AVFoundation-validated HQ candidate. The MOV remains ignored until
+// its direct-DOM alpha behavior passes the real Safari device gate.
+const HEVC_BYTES = 11_151_391;
+const HEVC_SHA256 = "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c";
 const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-hq-v1";
 const SOURCE_WIDTH = 900;
 const SOURCE_HEIGHT = 507;
@@ -1239,6 +1239,7 @@ function setupHevcAlphaCandidate(run: number): Runtime | null {
   video.dataset.contentAspectRatio = String(HEVC_CONTENT_ASPECT_RATIO);
   video.dataset.codedWidth = String(HEVC_CODED_WIDTH);
   video.dataset.codedHeight = String(HEVC_CODED_HEIGHT);
+  video.dataset.assetSha256 = HEVC_SHA256;
   video.dataset.qualification = hevcQualificationEvidence ?? "unqualified";
   video.style.visibility = "hidden";
   mediaStage.replaceChildren(preparationPoster, video);

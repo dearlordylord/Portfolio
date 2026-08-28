@@ -20,6 +20,13 @@ git archive ed50e2b -- Кадры | tar -x -C motion-artifacts/hevc-alpha-source
 
 The encoder rejects any other byte count or ordered source-set hash.
 
+The current AVFoundation-validated candidate is
+`hero-hevc-alpha-hq.mov` (11,151,391 bytes), SHA-256
+`54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c`.
+It reports `hvc1`, `containsAlphaChannel=true`, 150 samples at 15 fps,
+decoded content alpha `0...255`, and 1280×720 source/coded geometry. This is
+authoring evidence, not yet Safari promotion evidence.
+
 On macOS with Xcode selected (`xcode-select --install` is not enough without
 the Xcode SDK), run the dry-run first:
 
@@ -150,15 +157,23 @@ immutable asset URL and hash to the real-device alpha evidence.
 Once qualified, it keeps the direct-DOM video hidden while seekable delivery is
 prepared and shows only one lightweight static WebP frame-0 poster; it does not
 start C's frame scheduler during this runway. The prototype uses a measured
-4,000 ms preparation deadline (`HEVC_PREPARATION_DEADLINE_MS`), derived from a
-~1.1 s observed random video seek plus the existing 2,000 ms playback
-observation budget and additional Blob/decode headroom. At the deadline it
+15,000 ms preparation deadline (`HEVC_PREPARATION_DEADLINE_MS`) for this manual
+device test. Cloudflare Pages currently answers the staged MOV with `200`
+instead of a verified byte-range response, so the prototype must prepare the
+11.2 MB file as a locally seekable Blob behind frame 0. At the deadline it
 aborts the Blob request and falls back to C, so a stalled candidate cannot leave
-the hero blank indefinitely. The gate opens only after capability,
+the hero blank indefinitely. Production should move the qualified MOV to a
+range-capable media origin instead of extending this deadline. The gate opens
+only after capability,
 qualification, delivery, and `loadeddata`/`canplay` readiness all pass. A
 missing asset, unsupported codec, missing/failed qualification, media error, or
 non-seekable URL falls back to C before the base layer is visible. H is never
 uploaded to WebGL or reconstructed through a matte shader.
+
+The candidate MOV remains deliberately ignored. A staging deployment must be
+built from an artifact-bearing worktree and independently verify the deployed
+file's byte count and SHA-256. A clean clone intentionally omits H and falls to
+C until real-device evidence promotes the asset to durable media storage.
 
 Do not draw HEVC-with-alpha into canvas to “prove” transparency. WebKit bug
 [273006](https://bugs.webkit.org/show_bug.cgi?format=multiple&id=273006) shows

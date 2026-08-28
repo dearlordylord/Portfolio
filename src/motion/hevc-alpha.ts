@@ -19,7 +19,12 @@ export const HEVC_ALPHA_MIME = 'video/quicktime; codecs="hvc1.1.6.L93.B0"';
  * while the existing playback observation budget is 2 s; 4 s leaves room for
  * the full Blob preparation without allowing a blank hero to persist.
  */
-export const HEVC_PREPARATION_DEADLINE_MS = 4_000;
+// Cloudflare Pages does not currently honor byte ranges for the staged MOV,
+// so H prepares an 11.2 MB Blob behind frame 0. Fifteen seconds gives a real
+// mobile connection a useful qualification window without leaving the
+// candidate indefinitely pending; production should use a range-capable
+// media origin instead of increasing this further.
+export const HEVC_PREPARATION_DEADLINE_MS = 15_000;
 
 export const HEVC_RELEASE_CHECKS = [
   "macos-alpha-and-edges",
