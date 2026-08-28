@@ -4,6 +4,7 @@ import path from "node:path";
 
 const roots = ["Кадры", "icon", "Проекты"];
 const MAX_STATIC_ASSET_BYTES = 25 * 1024 * 1024;
+const HEVC_MANIFEST = "public/video-prototype/hero-hevc-alpha-hq.manifest.json";
 
 async function filesBelow(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -51,6 +52,49 @@ for (const root of roots) {
     bytes += sourceStat.size;
   }
 }
+
+const hevcManifest = JSON.parse(await readFile(HEVC_MANIFEST, "utf8"));
+const hevcFileName = hevcManifest?.output?.fileName;
+const hevcExpectedBytes = hevcManifest?.output?.bytes;
+const hevcExpectedSha256 = hevcManifest?.output?.sha256;
+if (
+  typeof hevcFileName !== "string"
+  || !Number.isInteger(hevcExpectedBytes)
+  || hevcExpectedBytes <= 0
+  || typeof hevcExpectedSha256 !== "string"
+  || !/^[a-f0-9]{64}$/i.test(hevcExpectedSha256)
+) {
+  throw new Error(`Invalid checked-in HEVC manifest: ${HEVC_MANIFEST}`);
+}
+
+const hevcSource = path.join("public/video-prototype", hevcFileName);
+const hevcDestination = path.join("dist/video-prototype", hevcFileName);
+const hevcManifestDestination = path.join("dist/video-prototype", path.basename(HEVC_MANIFEST));
+const [hevcSourceStat, hevcDestinationStat] = await Promise.all([
+  stat(hevcSource),
+  stat(hevcDestination),
+]);
+if (hevcSourceStat.size !== hevcExpectedBytes || hevcDestinationStat.size !== hevcExpectedBytes) {
+  throw new Error(`HEVC candidate byte count differs from its manifest: ${hevcFileName}`);
+}
+if (hevcSourceStat.size > MAX_STATIC_ASSET_BYTES) {
+  throw new Error(`HEVC candidate exceeds Cloudflare Pages' 25 MiB limit: ${hevcFileName}`);
+}
+const [hevcSourceDigest, hevcDestinationDigest, sourceManifestDigest, distManifestDigest] = await Promise.all([
+  digest(hevcSource),
+  digest(hevcDestination),
+  digest(HEVC_MANIFEST),
+  digest(hevcManifestDestination),
+]);
+if (hevcSourceDigest !== hevcExpectedSha256 || hevcDestinationDigest !== hevcExpectedSha256) {
+  throw new Error(`HEVC candidate SHA-256 differs from its manifest: ${hevcFileName}`);
+}
+if (sourceManifestDigest !== distManifestDigest) {
+  throw new Error(`Production HEVC manifest differs from source: ${HEVC_MANIFEST}`);
+}
+count += 2;
+bytes += hevcSourceStat.size + (await stat(HEVC_MANIFEST)).size;
+if (hevcSourceStat.size > largest.size) largest = { relative: hevcSource, size: hevcSourceStat.size };
 
 console.log(
   `Verified ${count} runtime assets in dist (${(bytes / 1024 / 1024).toFixed(1)} MiB); largest is ${

@@ -1,12 +1,13 @@
 # HEVC-with-alpha import gate (prototype)
 
-The H variant is intentionally a candidate, not a checked-in production codec
-asset. A normal HEVC encoder produces an opaque stream; it is not a substitute
-for Apple’s paired auxiliary alpha layer. The repository therefore includes a
-macOS/Xcode-only AVFoundation authoring command, but keeps its output in the
-ignored `motion-artifacts/hevc-alpha-hq/` staging directory until it has passed
-the real-device gate. The canonical candidate is deliberately distinct from
-the earlier reduced asset: `hero-hevc-alpha-hq-v1`.
+The H variant is intentionally a candidate, not yet the production-selected
+codec path. A normal HEVC encoder produces an opaque stream; it is not a
+substitute for Apple’s paired auxiliary alpha layer. The repository therefore
+includes a macOS/Xcode-only AVFoundation authoring command and checks in the
+exact validated candidate plus manifest under `public/video-prototype/` so a
+clean clone and staging build test the same bytes. The canonical candidate is
+deliberately distinct from the earlier reduced asset:
+`hero-hevc-alpha-hq-v1`.
 
 ## One-command Apple export
 
@@ -84,17 +85,16 @@ The command emits a deterministic JSON sidecar beside the MOV containing the
 source/encode settings, average bitrate, ordered source-set SHA-256 (each
 filename + NUL + file bytes in ascending frame order), measured output facts,
 decoded alpha range, byte count, and output SHA-256. It also prints exact copy
-instructions. The intended handoff is:
+instructions. The completed authoring handoff is:
 
-1. Keep the MOV and manifest under ignored staging while reviewing the
-   transparent edges and seek checkpoints on macOS Safari and iOS Safari.
-2. After that review, copy the exact staged file to
-   `public/video-prototype/hero-hevc-alpha-hq.mov`.
-3. Add a checked-in manifest binding the immutable URL and printed SHA-256 to
-   real-device alpha evidence. The prototype query parameters are an untrusted
-   manual override and do not replace this production manifest.
-4. Run `npm run build`, `npm run verify:dist`, and the supported Safari/iOS
-   matrix before deployment.
+1. The encoder writes the MOV and manifest under ignored staging.
+2. The exact validated pair is promoted to `public/video-prototype/` and
+   checked in; the manifest binds the source hash, output SHA-256, and measured
+   AVFoundation facts.
+3. Run `npm run build`, `npm run verify:dist`, and verify the distributed MOV
+   retains the manifest byte count and SHA-256.
+4. Record the supported Safari/iOS matrix before enabling H without the manual
+   prototype override. The query parameter remains untrusted test input.
 
 The Linux-testable `src/motion/hevc-encoder-config.ts` validator checks the
 sidecar shape and fixed source/output contract. It intentionally cannot certify
@@ -170,10 +170,10 @@ missing asset, unsupported codec, missing/failed qualification, media error, or
 non-seekable URL falls back to C before the base layer is visible. H is never
 uploaded to WebGL or reconstructed through a matte shader.
 
-The candidate MOV remains deliberately ignored. A staging deployment must be
-built from an artifact-bearing worktree and independently verify the deployed
-file's byte count and SHA-256. A clean clone intentionally omits H and falls to
-C until real-device evidence promotes the asset to durable media storage.
+The candidate MOV and its AVFoundation manifest are checked in together, so a
+clean clone produces the same H-capable staging build. The runtime still
+requires explicit manual device qualification until real-device evidence is
+recorded; repository presence alone does not promote H to production.
 
 Do not draw HEVC-with-alpha into canvas to “prove” transparency. WebKit bug
 [273006](https://bugs.webkit.org/show_bug.cgi?format=multiple&id=273006) shows

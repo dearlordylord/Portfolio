@@ -75,8 +75,8 @@ const WEBM_BYTES = 2_238_324;
 const MP4_BYTES = 1_839_215;
 const HQ_WEBM_BYTES = 0;
 const HQ_MP4_BYTES = 1_796_188;
-// Exact AVFoundation-validated HQ candidate. The MOV remains ignored until
-// its direct-DOM alpha behavior passes the real Safari device gate.
+// Exact checked-in AVFoundation-validated HQ candidate. It remains gated as a
+// prototype until its direct-DOM alpha behavior passes the Safari matrix.
 const HEVC_BYTES = 11_151_391;
 const HEVC_SHA256 = "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c";
 const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-hq-v1";
