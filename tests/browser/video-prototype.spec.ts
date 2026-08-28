@@ -45,6 +45,61 @@ for (const variant of ["a", "c"] as const) {
   });
 }
 
+test("A initialization failure bypasses B and falls directly to C", async ({ page }) => {
+  await page.goto("/prototype-video?variant=a&forceFail=a");
+
+  await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/);
+  await expect(page.locator("#metric-fallback")).toContainText("injected: forceFail=a");
+  await expect(page.locator("#metric-tape")).toContainText("from=a to=c");
+  await expect(page.locator("#metric-tape")).not.toContainText("from=a to=b");
+  await expect(page.locator("#media-stage canvas")).toBeVisible();
+  await expect(page.locator("#media-stage video")).toHaveCount(0);
+});
+
+test("A keeps its native source hidden behind a frame-0 poster until alpha proof", async ({ page }) => {
+  await page.addInitScript(() => {
+    const nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function canPlayType(type: string): CanPlayTypeResult {
+      if (type.includes("vp09")) return "probably";
+      return nativeCanPlayType.call(this, type);
+    };
+
+    const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement, type: string, options?: unknown): RenderingContext | null {
+      const context = (nativeGetContext as (contextId: string, contextOptions?: unknown) => RenderingContext | null).call(this, type, options);
+      if (type !== "2d" || this.width !== 2 || this.height !== 2 || !context) return context;
+      const twoD = context as CanvasRenderingContext2D;
+      const nativeGetImageData = twoD.getImageData.bind(twoD);
+      twoD.getImageData = (...args: Parameters<CanvasRenderingContext2D["getImageData"]>) => {
+        const image = nativeGetImageData(...args);
+        for (let index = 3; index < image.data.length; index += 4) image.data[index] = 255;
+        return image;
+      };
+      return twoD;
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  let releaseMedia: () => void = () => undefined;
+  const mediaDelayed = new Promise<void>((resolve) => {
+    releaseMedia = resolve;
+  });
+  await page.route("**/hero-alpha-vp9.webm", async (route) => {
+    await mediaDelayed;
+    await route.continue();
+  });
+
+  await page.goto("/prototype-video?variant=a", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#metric-active")).toHaveText(/A · Native VP9 alpha/);
+  await expect(page.locator("#media-stage .hero-render-poster")).toBeVisible();
+  await expect(page.locator("#media-stage video")).toHaveClass(/hero-render-source/);
+  await expect(page.locator("#media-stage video")).toHaveCSS("visibility", "hidden");
+
+  releaseMedia();
+  await expect(page.locator("#metric-active")).toHaveText(/C · WebP sequence/, { timeout: 10_000 });
+  await expect(page.locator("#metric-tape")).toContainText("from=a to=c");
+  await expect(page.locator("#metric-tape")).not.toContainText("from=a to=b");
+  await expect(page.locator("#media-stage canvas")).toBeVisible();
+});
+
 test("H hybrid candidate falls back to C before exposing an unavailable HEVC asset", async ({ page }) => {
   await page.goto("/prototype-video?variant=hybrid");
 

@@ -79,16 +79,17 @@ const HQ_MP4_BYTES = 1_796_188;
 // HEVC-with-alpha QuickTime file. `hevcSrc=/same-origin/path.mov` enables a real-device
 // import without allowing an unreviewed cross-origin asset into the gate.
 const HEVC_BYTES = 0;
-const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-v1";
+const HEVC_DEFAULT_ASSET_ID = "hero-hevc-alpha-hq-v1";
 const SOURCE_WIDTH = 900;
 const SOURCE_HEIGHT = 507;
-// H's Apple-coded MOV adds one transparent bottom row. C remains a
-// source/display-sized 900x507 WebP canvas; H diagnostics and layout retain
-// that content aspect ratio instead of treating the 900x508 coded surface as
-// the visible artwork bounds.
-const HEVC_CODED_WIDTH = 900;
-const HEVC_CODED_HEIGHT = 508;
-const HEVC_CONTENT_ASPECT_RATIO = SOURCE_WIDTH / SOURCE_HEIGHT;
+// H preserves the unreduced 1280x720 source directly. C remains the
+// independent reduced 900x507 correctness fallback until its HQ source is
+// separately promoted.
+const HEVC_CONTENT_WIDTH = 1280;
+const HEVC_CONTENT_HEIGHT = 720;
+const HEVC_CODED_WIDTH = 1280;
+const HEVC_CODED_HEIGHT = 720;
+const HEVC_CONTENT_ASPECT_RATIO = HEVC_CONTENT_WIDTH / HEVC_CONTENT_HEIGHT;
 const HQ_WIDTH = 1280;
 const HQ_HEIGHT = 720;
 const PACKED_WIDTH = 1800;
@@ -101,7 +102,7 @@ const WEBM_SOURCE = "/video-prototype/hero-alpha-vp9.webm";
 const MP4_SOURCE = "/video-prototype/hero-color-matte.mp4";
 const HQ_WEBM_SOURCE = "/video-prototype/hq-hero-alpha-vp9.webm";
 const HQ_MP4_SOURCE = "/video-prototype/hq-hero-color-matte.mp4";
-const HEVC_DEFAULT_SOURCE = "/video-prototype/hero-hevc-alpha.mov";
+const HEVC_DEFAULT_SOURCE = "/video-prototype/hero-hevc-alpha-hq.mov";
 const prototypeParams = new URLSearchParams(window.location.search);
 // Continuous playback is the comparison default. The production-style
 // checkpoint at frame 31 is opt-in so a bare prototype URL cannot look broken.
@@ -598,7 +599,12 @@ function observeNativeAlpha(
   let rafHandle: number | null = null;
   const check = (): void => {
     rafHandle = null;
-    if (checked || !isCurrent() || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !context) return;
+    if (checked || !isCurrent() || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (!context) {
+      checked = true;
+      onFailure("A alpha pixel probe failed: 2D canvas context unavailable");
+      return;
+    }
     try {
       context.clearRect(0, 0, probe.width, probe.height);
       context.drawImage(video, 0, 0, probe.width, probe.height);
@@ -661,6 +667,8 @@ type MediaEventCallbacks = {
   onReady?: () => void;
   onPlaying?: () => void;
   onPaused?: () => void;
+  markReady?: boolean;
+  markFirstVisible?: boolean;
 };
 
 function appendMediaEvents(
@@ -677,10 +685,12 @@ function appendMediaEvents(
       metrics.state = name;
       if (name === "loadedmetadata" || name === "loadeddata" || name === "canplay") updateMediaMetrics(video, "video metadata pending");
       if (name === "canplay") {
-        markReady();
+        if (callbacks.markReady !== false) markReady();
         callbacks.onReady?.();
       }
-      if (name === "loadeddata" || name === "playing") markFirstVisible();
+      if (name === "loadeddata" || name === "playing") {
+        if (callbacks.markFirstVisible !== false) markFirstVisible();
+      }
       if (name === "playing") playToggle.classList.remove("visible");
       if (name === "pause" || name === "waiting") playToggle.classList.add("visible");
       if (name === "pause" && scrubHeldFrame !== null) metrics.state = `scrub held frame ${scrubHeldFrame}`;
@@ -708,7 +718,11 @@ function appendMediaEvents(
   };
 }
 
-function setupVideoElement(source: string): HTMLVideoElement {
+type VideoElementOptions = {
+  onPreparationFailure?: (reason: string) => void;
+};
+
+function setupVideoElement(source: string, options: VideoElementOptions = {}): HTMLVideoElement {
   const video = document.createElement("video");
   video.className = "hero-render hero-render-source";
   video.autoplay = true;
@@ -743,11 +757,16 @@ function setupVideoElement(source: string): HTMLVideoElement {
     })
     .catch((error) => {
       if (!video.isConnected) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      if (options.onPreparationFailure) {
+        options.onPreparationFailure(reason);
+        return;
+      }
       // Preserve a playable comparison when blob preparation itself fails;
       // diagnostics will still expose the browser/server seek limitation.
       video.src = source;
       video.load();
-      recordEvent(`seekable blob failed: ${error instanceof Error ? error.message : String(error)}`);
+      recordEvent(`seekable blob failed: ${reason}`);
     });
   return video;
 }
@@ -791,20 +810,44 @@ function setupNativeVp9(run: number): Runtime | null {
     return null;
   }
 
-  const video = setupVideoElement(nativeQuality === "hq" ? HQ_WEBM_SOURCE : WEBM_SOURCE);
-  video.classList.remove("hero-render-source");
+  const source = nativeQuality === "hq" ? HQ_WEBM_SOURCE : WEBM_SOURCE;
+  const video = setupVideoElement(source, {
+    onPreparationFailure: (reason) => {
+      if (runId !== run || currentVariant !== "a") return;
+      const failure = `A media preparation failed: ${reason}`;
+      metrics.error = failure;
+      addFallbackReason(failure);
+      recordEvent(failure);
+      fallbackFrom("a", failure);
+    },
+  });
+  // A must not expose or autoplay an unverified native alpha surface. The
+  // frame-0 poster remains the only visible artwork until the decoded probe
+  // and media readiness both pass.
+  video.autoplay = false;
   video.loop = !segmentedPlayback;
+  const preparationPoster = document.createElement("img");
+  preparationPoster.className = "hero-render hero-render-poster";
+  preparationPoster.src = frameSource(0);
+  preparationPoster.decoding = "async";
+  preparationPoster.alt = "";
+  preparationPoster.setAttribute("aria-hidden", "true");
+  mediaStage.replaceChildren(preparationPoster, video);
   metrics.active = "a";
   metrics.alpha = `encoded VP9 alpha (${nativeQuality}; alpha_mode=1; browser render unverified)`;
   metrics.state = `loading ${nativeQuality === "hq" ? "HQ " : ""}WebM`;
   metrics.transferredBytes = resourceBytes(nativeQuality === "hq" ? HQ_WEBM_SOURCE : WEBM_SOURCE, nativeQuality === "hq" ? HQ_WEBM_BYTES : WEBM_BYTES);
   renderMetrics();
+  markFirstVisible();
+  recordEvent("A preparation poster visible (WebP frame 0)");
   const isCurrent = () => runId === run && runtime?.variant === "a";
   const binding = playbackBinding ?? createPlaybackBinding("a");
   playbackBinding = binding;
   const handoff = binding.snapshot();
   const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
   const shouldResumeHandoff = shouldAutoplayHandoff(handoff);
+  let alphaQualified = false;
+  let mediaReady = false;
   let readyDispatched = false;
   const applyHandoff = (): void => {
     if (!handoff.eventTape.some((entry) => entry.event === "media-ready") || handoffFrame <= 0) return;
@@ -813,11 +856,23 @@ function setupNativeVp9(run: number): Runtime | null {
     if (shouldResumeHandoff) playVideo(video, isCurrent);
     else video.pause();
   };
-  const onReady = (): void => {
-    if (readyDispatched) return;
+  const releaseAfterAlphaProof = (): void => {
+    if (!isCurrent() || !alphaQualified || !mediaReady || readyDispatched) return;
     readyDispatched = true;
+    preparationPoster.removeAttribute("src");
+    preparationPoster.remove();
+    video.classList.remove("hero-render-source");
+    metrics.state = "VP9 alpha verified · native video visible";
+    markReady();
     dispatchMediaReady(binding, video, isCurrent);
     applyHandoff();
+    if (shouldResumeHandoff) playVideo(video, isCurrent);
+    renderMetrics();
+    recordEvent("A decoded alpha proof accepted; native video exposed");
+  };
+  const onReady = (): void => {
+    mediaReady = true;
+    releaseAfterAlphaProof();
   };
   const removeMediaListeners = appendMediaEvents(video, isCurrent, (reason) => {
     if (isCurrent()) {
@@ -826,6 +881,8 @@ function setupNativeVp9(run: number): Runtime | null {
     }
   }, {
     onReady,
+    markReady: false,
+    markFirstVisible: false,
     onPlaying: () => binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() }),
     onPaused: () => {
       const state = binding.snapshot();
@@ -887,6 +944,10 @@ function setupNativeVp9(run: number): Runtime | null {
     addFallbackReason(reason);
     recordEvent(reason);
     fallbackFrom("a", reason);
+  }, () => {
+    if (!isCurrent()) return;
+    alphaQualified = true;
+    releaseAfterAlphaProof();
   });
   const pauseForScrub = (): void => {
     if (!isCurrent()) return;
@@ -942,9 +1003,7 @@ function setupNativeVp9(run: number): Runtime | null {
   };
   const stopPresentation = observeNativePresentation(video, isCurrent, binding);
   playToggle.classList.remove("visible");
-  applyHandoff();
-  if (shouldResumeHandoff) playVideo(video, isCurrent);
-  else video.pause();
+  video.pause();
   return {
     variant: "a",
     pauseForScrub,
@@ -992,6 +1051,8 @@ function setupNativeVp9(run: number): Runtime | null {
       video.removeEventListener("timeupdate", timeListener);
       video.removeEventListener("seeked", seekListener);
       releaseVideoElement(video);
+      preparationPoster.removeAttribute("src");
+      preparationPoster.remove();
       playToggle.classList.remove("visible");
     },
   };
@@ -1173,8 +1234,8 @@ function setupHevcAlphaCandidate(run: number): Runtime | null {
   video.setAttribute("muted", "");
   video.setAttribute("aria-hidden", "true");
   video.dataset.renderer = "hevc-alpha-dom";
-  video.dataset.contentWidth = String(SOURCE_WIDTH);
-  video.dataset.contentHeight = String(SOURCE_HEIGHT);
+  video.dataset.contentWidth = String(HEVC_CONTENT_WIDTH);
+  video.dataset.contentHeight = String(HEVC_CONTENT_HEIGHT);
   video.dataset.contentAspectRatio = String(HEVC_CONTENT_ASPECT_RATIO);
   video.dataset.codedWidth = String(HEVC_CODED_WIDTH);
   video.dataset.codedHeight = String(HEVC_CODED_HEIGHT);
@@ -2367,7 +2428,10 @@ function setupWebpSequence(run: number): Runtime {
 }
 
 function nextFallback(variant: Variant): Variant | null {
-  if (variant === "a") return "b";
+  // A's native alpha claim is correctness-sensitive: if capability,
+  // preparation, or the decoded probe fails, go straight to C. B remains a
+  // manually selectable lab draft and is never an automatic A fallback.
+  if (variant === "a") return "c";
   if (variant === "b") return "c";
   if (variant === "h") return "c";
   return null;
@@ -2404,9 +2468,18 @@ function startRenderer(variant: Variant, preservePlayback = false): void {
   renderMetrics();
 
   let next: Runtime | null = null;
-  if (variant === "a") next = setupNativeVp9(run);
-  if (variant === "b") next = setupPackedH264(run);
-  if (variant === "h") next = setupHevcAlphaCandidate(run);
+  try {
+    if (variant === "a") next = setupNativeVp9(run);
+    if (variant === "b") next = setupPackedH264(run);
+    if (variant === "h") next = setupHevcAlphaCandidate(run);
+  } catch (error) {
+    if (variant !== "a") throw error;
+    const reason = `A initialization failed: ${error instanceof Error ? error.message : String(error)}`;
+    metrics.error = reason;
+    addFallbackReason(reason);
+    recordEvent(reason);
+    next = null;
+  }
   if (next) {
     runtime = next;
     recordEvent(`active ${definition(variant).label}`);

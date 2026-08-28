@@ -10,12 +10,12 @@ import {
 
 const validManifest = {
   schemaVersion: 1,
-  assetId: "hero-hevc-alpha-v1",
+  assetId: HEVC_ENCODER_DEFAULTS.assetId,
   source: {
     inputPattern: HEVC_ENCODER_DEFAULTS.inputPattern,
-    sourceSetSha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-    width: 900,
-    height: 507,
+    sourceSetSha256: HEVC_ENCODER_DEFAULTS.sourceSetSha256,
+    width: 1280,
+    height: 720,
     frameCount: 150,
     frameRate: 15,
     durationSeconds: 10,
@@ -27,26 +27,26 @@ const validManifest = {
     alphaQuality: 1,
     maxKeyframeInterval: 15,
     averageBitRate: 8_000_000,
-    codedWidth: 900,
-    codedHeight: 508,
-    contentRect: { x: 0, y: 0, width: 900, height: 507 },
-    paddingRowCount: 1,
-    paddingRowEdge: "bottom",
-    paddingAlpha: "transparent",
+    codedWidth: 1280,
+    codedHeight: 720,
+    contentRect: { x: 0, y: 0, width: 1280, height: 720 },
+    paddingRowCount: 0,
+    paddingRowEdge: "none",
+    paddingAlpha: "not-applicable",
     cleanAperture: "none",
   },
   output: {
-    fileName: "hero-hevc-alpha.mov",
+    fileName: HEVC_ENCODER_DEFAULTS.outputFileName,
     bytes: 123_456,
     sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    width: 900,
-    height: 508,
-    codedWidth: 900,
-    codedHeight: 508,
-    contentRect: { x: 0, y: 0, width: 900, height: 507 },
-    paddingRowCount: 1,
-    paddingRowEdge: "bottom",
-    paddingAlpha: "transparent",
+    width: 1280,
+    height: 720,
+    codedWidth: 1280,
+    codedHeight: 720,
+    contentRect: { x: 0, y: 0, width: 1280, height: 720 },
+    paddingRowCount: 0,
+    paddingRowEdge: "none",
+    paddingAlpha: "not-applicable",
     cleanAperture: "none",
     frameCount: 150,
     frameRate: 15,
@@ -65,13 +65,16 @@ const validManifest = {
 describe("HEVC-alpha encoder configuration", () => {
   it("defines the supplied frame archive contract", () => {
     expect(HEVC_ENCODER_DEFAULTS).toMatchObject({
-      sourceWidth: 900,
-      sourceHeight: 507,
-      codedWidth: 900,
-      codedHeight: 508,
-      paddingRowCount: 1,
-      paddingRowEdge: "bottom",
-      paddingAlpha: "transparent",
+      assetId: "hero-hevc-alpha-hq-v1",
+      outputFileName: "hero-hevc-alpha-hq.mov",
+      sourceSetSha256: "1b0887fb70487d7abd0de6e1de5ed2c154ff140a645d8393e4111cf7d3807a66",
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      codedWidth: 1280,
+      codedHeight: 720,
+      paddingRowCount: 0,
+      paddingRowEdge: "none",
+      paddingAlpha: "not-applicable",
       cleanAperture: "none",
       frameCount: 150,
       frameRate: 15,
@@ -92,7 +95,8 @@ describe("HEVC-alpha encoder configuration", () => {
     expect(validateHevcEncoderConfig({ alphaQuality: 1.01 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ keyframeInterval: 0 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ keyframeInterval: 151 })).toMatchObject({ valid: false });
-    expect(validateHevcEncoderConfig({ sourceWidth: 899 })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderConfig({ sourceWidth: 1279 })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderConfig({ sourceSetSha256: "old-reduced-source" })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ codedHeight: 506 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ frameRate: 0 })).toMatchObject({ valid: false });
     expect(validateHevcEncoderConfig({ averageBitRate: 0 })).toMatchObject({ valid: false });
@@ -140,6 +144,14 @@ describe("HEVC-alpha staging manifest validation", () => {
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,
+      assetId: "hero-hevc-alpha-v1",
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
+      source: { ...validManifest.source, sourceSetSha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" },
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
       output: { ...validManifest.output, codec: "hevcWithAlpha" },
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
@@ -152,7 +164,7 @@ describe("HEVC-alpha staging manifest validation", () => {
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,
-      output: { ...validManifest.output, height: 506, codedHeight: 506 },
+      output: { ...validManifest.output, height: 719, codedHeight: 719 },
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,
@@ -160,7 +172,7 @@ describe("HEVC-alpha staging manifest validation", () => {
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,
-      output: { ...validManifest.output, paddingRowCount: 0 },
+      output: { ...validManifest.output, paddingRowCount: 1 },
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,

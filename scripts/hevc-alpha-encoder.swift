@@ -22,25 +22,25 @@ import VideoToolbox
 import Darwin
 #endif
 
-// The source/display contract is the supplied RGBA archive. The coded MOV
-// deliberately adds one cleared row at the bottom so every source pixel is
-// retained on Macs whose HEVC-alpha path rejects the odd 900x507 height.
-// `contentRect` below is expressed in top-left/display coordinates; the
-// bitmap context is shifted by `paddingRowCount` in its lower-left Quartz
-// coordinate system so the visual content remains in the same orientation as
-// the source renderer.
-private let sourceWidth = 900
-private let sourceHeight = 507
-private let encodedWidth = 900
-private let encodedHeight = 508
-private let paddingRowCount = 1
-private let paddingRowEdge = "bottom"
-private let paddingAlpha = "transparent"
+// The source/display contract is the unreduced, high-quality RGBA archive.
+// The coded MOV preserves that source geometry directly: no resize, crop,
+// clean aperture, or synthetic padding row is permitted. The source-set hash
+// binds this command to the exact 150-frame archive rather than the older
+// reduced 900x507 candidate.
+private let sourceWidth = 1280
+private let sourceHeight = 720
+private let encodedWidth = 1280
+private let encodedHeight = 720
+private let paddingRowCount = 0
+private let paddingRowEdge = "none"
+private let paddingAlpha = "not-applicable"
 private let cleanAperture = "none"
 private let sourceFrameCount = 150
 private let sourceFrameRate = 15
 private let sourceInputPattern = "frame_%03d_delay-0.067s.webp"
-private let defaultAssetID = "hero-hevc-alpha-v1"
+private let expectedSourceSetByteCount = 20_046_600
+private let expectedSourceSetSHA256 = "1b0887fb70487d7abd0de6e1de5ed2c154ff140a645d8393e4111cf7d3807a66"
+private let defaultAssetID = "hero-hevc-alpha-hq-v1"
 private let defaultAlphaQuality: Float = 1.0
 private let defaultKeyframeInterval = 15
 private let defaultBitrate = 8_000_000
@@ -152,10 +152,11 @@ private struct Options {
             index += 1
         }
 
-        let resolvedInput = inputDirectory ?? currentDirectory.appendingPathComponent("Кадры")
+        let resolvedInput = inputDirectory ?? currentDirectory
+            .appendingPathComponent("motion-artifacts/hevc-alpha-source-hq/Кадры")
             .standardizedFileURL
         let resolvedOutput = outputURL ?? currentDirectory
-            .appendingPathComponent("motion-artifacts/hevc-alpha/hero-hevc-alpha.mov")
+            .appendingPathComponent("motion-artifacts/hevc-alpha-hq/hero-hevc-alpha-hq.mov")
             .standardizedFileURL
         let resolvedManifest = (manifestURL ?? resolvedOutput
             .deletingPathExtension()
@@ -188,15 +189,16 @@ private struct Options {
 private let usageText = """
 Usage: npm run prototype:encode:hevc-alpha -- [options]
 
-Reads the fixed 150-frame RGBA WebP archive (900x507 at 15 fps) and writes an
-Apple HEVC-with-alpha QuickTime MOV using AVFoundation. The source/display
-content remains 900x507; the coded MOV is 900x508 with exactly one explicitly
-cleared transparent bottom row. Defaults are intentionally staged under
-motion-artifacts/hevc-alpha/ (ignored by git), never public production assets.
+Reads the fixed unreduced 150-frame RGBA WebP archive (1280x720 at 15 fps) and
+writes an Apple HEVC-with-alpha QuickTime MOV using AVFoundation. The
+source/display content and coded MOV are both 1280x720; no padding or clean
+aperture is used. Defaults are intentionally staged under
+motion-artifacts/hevc-alpha-hq/ (ignored by git), never public production
+assets.
 
 Options:
-  --input PATH                 frame directory (default: ./Кадры)
-  --output PATH                MOV path (default: ./motion-artifacts/hevc-alpha/hero-hevc-alpha.mov)
+  --input PATH                 frame directory (default: ./motion-artifacts/hevc-alpha-source-hq/Кадры)
+  --output PATH                MOV path (default: ./motion-artifacts/hevc-alpha-hq/hero-hevc-alpha-hq.mov)
   --manifest PATH              JSON sidecar path (default: alongside MOV)
   --repo-root PATH             repository root used for tracked-output guard
   --asset-id ID                immutable asset label for the staging manifest
@@ -323,9 +325,9 @@ private struct Manifest: Encodable {
     let output: Output
 }
 
-// Pixel-buffer rows are addressed from the lower-left Quartz origin here.
-// The manifest's contentRect uses the conventional top-left/display origin:
-// x=0, y=0, width=900, height=507 with one transparent row at the bottom.
+// Pixel-buffer rows are addressed from the lower-left Quartz origin here. The
+// HQ manifest's contentRect uses the conventional top-left/display origin and
+// covers the complete coded surface: x=0, y=0, width=1280, height=720.
 private let encodedContentRows = paddingRowCount..<encodedHeight
 private let encodedPaddingRows = 0..<paddingRowCount
 
@@ -356,6 +358,7 @@ private func frameURLs(in directory: URL) throws -> [URL] {
 /// manifest, while the NUL separator makes the hash algorithm unambiguous.
 private func orderedSourceSetSHA256(urls: [URL]) throws -> String {
     var hasher = SHA256()
+    var totalBytes = 0
     for url in urls {
         let bytes: Data
         do {
@@ -363,9 +366,15 @@ private func orderedSourceSetSHA256(urls: [URL]) throws -> String {
         } catch {
             throw EncoderError.invalidInput("could not hash source frame \(url.path): \(error.localizedDescription)")
         }
+        totalBytes += bytes.count
         hasher.update(data: Data(url.lastPathComponent.utf8))
         hasher.update(data: Data([0]))
         hasher.update(data: bytes)
+    }
+    guard totalBytes == expectedSourceSetByteCount else {
+        throw EncoderError.invalidInput(
+            "source-set byte count is \(totalBytes); expected \(expectedSourceSetByteCount) for the unreduced high-quality archive"
+        )
     }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
@@ -436,9 +445,9 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
         throw EncoderError.encoding("could not create BGRA bitmap context")
     }
     context.interpolationQuality = .high
-    // Clearing the complete coded surface makes the padding guarantee
-    // explicit even if CoreVideo returns recycled memory. Draw only into the
-    // source content rect, leaving exactly one transparent bottom row.
+    // Clearing first makes the pixel-buffer contents deterministic even if
+    // CoreVideo returns recycled memory. The HQ source fills the coded surface
+    // directly; there is no padding row to manufacture or validate.
     context.clear(CGRect(x: 0, y: 0, width: encodedWidth, height: encodedHeight))
     context.draw(
         image,
@@ -448,9 +457,8 @@ private func makePixelBuffer(from image: CGImage, frameName: String) throws -> P
     let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
     let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
     var alphaRange = AlphaRange()
-    // Keep the source alpha evidence separate from the synthetic padding row;
-    // otherwise an opaque source would appear to have transparency merely
-    // because the coded surface is padded.
+    // Measure only source/content rows. For this direct-size contract that is
+    // the complete coded surface.
     for row in encodedContentRows {
         let rowBytes = bytes.advanced(by: row * bytesPerRow)
         for column in 0..<sourceWidth {
@@ -723,23 +731,33 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
     var sampleCount = 0
     var decodedAlpha = AlphaRange()
     var decodedContentAlpha = AlphaRange()
-    var decodedPaddingAlpha = AlphaRange()
+    // No padding is part of the HQ contract. Represent the not-applicable
+    // range as an already-satisfied transparent 0...0 value; do not invoke
+    // the row scanner for the empty 0..<0 range.
+    var decodedPaddingAlpha = paddingRowCount == 0
+        ? AlphaRange(minimum: 0, maximum: 0)
+        : AlphaRange()
     while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             throw EncoderError.validation("decoded sample \(sampleCount) has no image buffer")
         }
         let fullRange = try decodedAlphaRange(from: imageBuffer, rows: 0..<encodedHeight)
         let contentRange = try decodedAlphaRange(from: imageBuffer, rows: encodedContentRows)
-        let paddingRange = try decodedAlphaRange(from: imageBuffer, rows: encodedPaddingRows)
-        guard paddingRange.minimum == 0, paddingRange.maximum == 0 else {
-            throw EncoderError.validation(
-                "decoded padding row is not fully transparent in sample \(sampleCount) "
-                    + "(alpha \(paddingRange.minimum)...\(paddingRange.maximum))"
-            )
+        // The HQ contract has no padding rows. Keep the conditional so this
+        // validator never asks decodedAlphaRange to inspect an empty range;
+        // the legacy padded candidate used a separate non-empty branch here.
+        if !encodedPaddingRows.isEmpty {
+            let paddingRange = try decodedAlphaRange(from: imageBuffer, rows: encodedPaddingRows)
+            guard paddingRange.minimum == 0, paddingRange.maximum == 0 else {
+                throw EncoderError.validation(
+                    "decoded padding row is not fully transparent in sample \(sampleCount) "
+                        + "(alpha \(paddingRange.minimum)...\(paddingRange.maximum))"
+                )
+            }
+            decodedPaddingAlpha.merge(paddingRange)
         }
         decodedAlpha.merge(fullRange)
         decodedContentAlpha.merge(contentRange)
-        decodedPaddingAlpha.merge(paddingRange)
         sampleCount += 1
         if sampleCount > sourceFrameCount {
             throw EncoderError.validation("sample count exceeds \(sourceFrameCount)")
@@ -976,7 +994,7 @@ private func checkWriterCapability(options: Options, at url: URL) throws {
 }
 
 private func printNextSteps(options: Options, digest: String, sourceSetSHA256: String, bytes: Int) {
-    let destination = options.repoRoot.appendingPathComponent("public/video-prototype/hero-hevc-alpha.mov").path
+    let destination = options.repoRoot.appendingPathComponent("public/video-prototype/hero-hevc-alpha-hq.mov").path
     print("""
 
     SHA-256: \(digest)
@@ -1003,6 +1021,11 @@ private func run(options: Options) throws {
     cleanupWriterSidecars(for: options.outputURL)
     let urls = try frameURLs(in: options.inputDirectory)
     let sourceSetSHA256 = try orderedSourceSetSHA256(urls: urls)
+    guard sourceSetSHA256 == expectedSourceSetSHA256 else {
+        throw EncoderError.invalidInput(
+            "source-set SHA-256 is \(sourceSetSHA256); expected the unreduced high-quality archive \(expectedSourceSetSHA256)"
+        )
+    }
     let temporaryWriterURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("portfolio-hevc-alpha-\(ProcessInfo.processInfo.globallyUniqueString).mov")
 
@@ -1013,7 +1036,7 @@ private func run(options: Options) throws {
         print("Input: \(options.inputDirectory.path)")
         print("Frames: \(sourceFrameCount) at \(sourceFrameRate) fps (\(Double(sourceFrameCount) / Double(sourceFrameRate))s)")
         print("Source/display content: \(sourceWidth)x\(sourceHeight)")
-        print("Coded MOV: \(encodedWidth)x\(encodedHeight), padding \(paddingRowCount) \(paddingRowEdge) row (\(paddingAlpha))")
+        print("Coded MOV: \(encodedWidth)x\(encodedHeight), padding rows \(paddingRowCount) (\(paddingAlpha))")
         print("Input alpha range: \(summary.minimumAlpha)...\(summary.maximumAlpha)")
         print("Ordered source-set SHA-256: \(sourceSetSHA256)")
         print("AVAssetWriter: canApply hevcWithAlpha + alpha settings")

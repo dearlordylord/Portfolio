@@ -23,14 +23,15 @@ if [[ ! -f "$swift_encoder" ]]; then
   exit 1
 fi
 
-staging_dir="${HEVC_ALPHA_OUTPUT_DIR:-$project_root/motion-artifacts/hevc-alpha}"
-output_path="${HEVC_ALPHA_OUTPUT:-$staging_dir/hero-hevc-alpha.mov}"
+input_dir="${HEVC_ALPHA_INPUT_DIR:-$project_root/motion-artifacts/hevc-alpha-source-hq/Кадры}"
+staging_dir="${HEVC_ALPHA_OUTPUT_DIR:-$project_root/motion-artifacts/hevc-alpha-hq}"
+output_path="${HEVC_ALPHA_OUTPUT:-$staging_dir/hero-hevc-alpha-hq.mov}"
 
 # The Swift tool creates parent directories and enforces the tracked-output
 # guard. The default is already covered by the repository's motion-artifacts/
 # ignore rule; callers must opt in before writing a production-tree path.
 exec xcrun swift "$swift_encoder" \
-  --input "$project_root/Кадры" \
+  --input "$input_dir" \
   --output "$output_path" \
   --repo-root "$project_root" \
   "$@"

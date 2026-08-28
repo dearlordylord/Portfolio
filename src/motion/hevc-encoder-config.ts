@@ -1,18 +1,21 @@
 /**
  * PROTOTYPE-ONLY contract shared by the macOS encoder documentation and
- * Linux-runnable tests. The values describe the supplied RGBA WebP archive;
- * the Swift encoder deliberately keeps these source/display dimensions fixed
- * and codes them into a 900x508 surface with one transparent bottom row.
+ * Linux-runnable tests. The values describe the unreduced, high-quality RGBA
+ * WebP archive. The Swift encoder keeps these dimensions and bytes fixed and
+ * codes them directly into a 1280x720 surface without padding or cropping.
  */
 
 export const HEVC_ENCODER_DEFAULTS = {
-  sourceWidth: 900,
-  sourceHeight: 507,
-  codedWidth: 900,
-  codedHeight: 508,
-  paddingRowCount: 1,
-  paddingRowEdge: "bottom",
-  paddingAlpha: "transparent",
+  assetId: "hero-hevc-alpha-hq-v1",
+  outputFileName: "hero-hevc-alpha-hq.mov",
+  sourceSetSha256: "1b0887fb70487d7abd0de6e1de5ed2c154ff140a645d8393e4111cf7d3807a66",
+  sourceWidth: 1280,
+  sourceHeight: 720,
+  codedWidth: 1280,
+  codedHeight: 720,
+  paddingRowCount: 0,
+  paddingRowEdge: "none",
+  paddingAlpha: "not-applicable",
   cleanAperture: "none",
   frameCount: 150,
   frameRate: 15,
@@ -26,6 +29,9 @@ export const HEVC_ENCODER_DEFAULTS = {
 } as const;
 
 export type HevcEncoderConfig = {
+  assetId: string;
+  outputFileName: string;
+  sourceSetSha256: string;
   sourceWidth: number;
   sourceHeight: number;
   codedWidth: number;
@@ -157,12 +163,14 @@ export function validateHevcEncoderConfig(
     "sourceHeight",
     "codedWidth",
     "codedHeight",
-    "paddingRowCount",
     "frameCount",
   ] as const) {
     if (!integer(config[key]) || (config[key] as number) <= 0) {
       errors.push(String(key) + " must be a positive integer");
     }
+  }
+  if (!integer(config.paddingRowCount) || (config.paddingRowCount as number) < 0) {
+    errors.push("paddingRowCount must be a non-negative integer");
   }
   if (!finite(config.frameRate) || (config.frameRate as number) <= 0) {
     errors.push("frameRate must be a positive number");
@@ -182,10 +190,10 @@ export function validateHevcEncoderConfig(
     errors.push("averageBitRate must be a positive integer");
   }
   if (config.paddingRowEdge !== HEVC_ENCODER_DEFAULTS.paddingRowEdge) {
-    errors.push("paddingRowEdge must be bottom");
+    errors.push("paddingRowEdge must be none for the direct-size HQ encode");
   }
   if (config.paddingAlpha !== HEVC_ENCODER_DEFAULTS.paddingAlpha) {
-    errors.push("paddingAlpha must be transparent");
+    errors.push("paddingAlpha must be not-applicable for the direct-size HQ encode");
   }
   if (config.cleanAperture !== HEVC_ENCODER_DEFAULTS.cleanAperture) {
     errors.push("cleanAperture must be none");
@@ -208,6 +216,9 @@ export function validateHevcEncoderConfig(
 
   // The source archive and the Apple writer choices are intentionally fixed
   // so a manifest cannot silently describe a different input contract.
+  addExactError(errors, config, "assetId", HEVC_ENCODER_DEFAULTS.assetId);
+  addExactError(errors, config, "outputFileName", HEVC_ENCODER_DEFAULTS.outputFileName);
+  addExactError(errors, config, "sourceSetSha256", HEVC_ENCODER_DEFAULTS.sourceSetSha256);
   addExactError(errors, config, "sourceWidth", HEVC_ENCODER_DEFAULTS.sourceWidth);
   addExactError(errors, config, "sourceHeight", HEVC_ENCODER_DEFAULTS.sourceHeight);
   addExactError(errors, config, "codedWidth", HEVC_ENCODER_DEFAULTS.codedWidth);
@@ -246,8 +257,8 @@ function hasExpectedSource(source: Record<string, unknown>, errors: string[]): v
       errors.push("source." + key + " does not match the supplied frame archive");
     }
   }
-  if (typeof source.sourceSetSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(source.sourceSetSha256)) {
-    errors.push("source.sourceSetSha256 must be a 64-character hexadecimal digest");
+  if (source.sourceSetSha256 !== HEVC_ENCODER_DEFAULTS.sourceSetSha256) {
+    errors.push("source.sourceSetSha256 does not match the unreduced high-quality frame archive");
   }
   if (!closeToExpected(source.durationSeconds, expectedHevcDurationSeconds())) {
     errors.push("source.durationSeconds does not match frameCount / frameRate");
@@ -263,7 +274,7 @@ function hasExpectedGeometry(
     errors.push(path + ".codedWidth must be " + HEVC_ENCODER_DEFAULTS.codedWidth);
   }
   if (owner.codedHeight !== HEVC_ENCODER_DEFAULTS.codedHeight) {
-    errors.push(path + ".codedHeight must be " + HEVC_ENCODER_DEFAULTS.codedHeight + " (900x506 is not supported)");
+    errors.push(path + ".codedHeight must be " + HEVC_ENCODER_DEFAULTS.codedHeight);
   }
   if (!isRecord(owner.contentRect)) {
     errors.push(path + ".contentRect must be an object");
@@ -275,17 +286,23 @@ function hasExpectedGeometry(
       || rect.width !== HEVC_ENCODER_DEFAULTS.sourceWidth
       || rect.height !== HEVC_ENCODER_DEFAULTS.sourceHeight
     ) {
-      errors.push(path + ".contentRect must be x0 y0 w900 h507");
+      errors.push(
+        path
+          + ".contentRect must be x0 y0 w"
+          + HEVC_ENCODER_DEFAULTS.sourceWidth
+          + " h"
+          + HEVC_ENCODER_DEFAULTS.sourceHeight,
+      );
     }
   }
   if (owner.paddingRowCount !== HEVC_ENCODER_DEFAULTS.paddingRowCount) {
-    errors.push(path + ".paddingRowCount must be 1");
+    errors.push(path + ".paddingRowCount must be 0 for the direct-size HQ encode");
   }
   if (owner.paddingRowEdge !== HEVC_ENCODER_DEFAULTS.paddingRowEdge) {
-    errors.push(path + ".paddingRowEdge must be bottom");
+    errors.push(path + ".paddingRowEdge must be none when paddingRowCount is 0");
   }
   if (owner.paddingAlpha !== HEVC_ENCODER_DEFAULTS.paddingAlpha) {
-    errors.push(path + ".paddingAlpha must be transparent");
+    errors.push(path + ".paddingAlpha must be not-applicable when paddingRowCount is 0");
   }
   if (owner.cleanAperture !== HEVC_ENCODER_DEFAULTS.cleanAperture) {
     errors.push(path + ".cleanAperture must be none");
@@ -301,8 +318,8 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
   const errors: string[] = [];
   if (!isRecord(manifest)) return { valid: false, errors: ["manifest must be an object"] };
   if (manifest.schemaVersion !== 1) errors.push("schemaVersion must be 1");
-  if (typeof manifest.assetId !== "string" || manifest.assetId.trim() === "") {
-    errors.push("assetId must be non-empty");
+  if (manifest.assetId !== HEVC_ENCODER_DEFAULTS.assetId) {
+    errors.push("assetId must be " + HEVC_ENCODER_DEFAULTS.assetId);
   }
 
   if (!isRecord(manifest.source)) {
@@ -333,8 +350,8 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
     errors.push("output must be an object");
   } else {
     const output = manifest.output;
-    if (typeof output.fileName !== "string" || !/^[^/\\]+\.mov$/i.test(output.fileName)) {
-      errors.push("output.fileName must be a basename ending in .mov");
+    if (output.fileName !== HEVC_ENCODER_DEFAULTS.outputFileName) {
+      errors.push("output.fileName must be " + HEVC_ENCODER_DEFAULTS.outputFileName);
     }
     if (!integer(output.bytes) || output.bytes <= 0) errors.push("output.bytes must be positive");
     if (typeof output.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(output.sha256)) {
@@ -385,7 +402,7 @@ export function validateHevcEncoderManifest(manifest: unknown): HevcValidation {
       errors.push("decoded content alpha must contain both transparent and visible values");
     }
     if (output.decodedPaddingAlphaMinimum !== 0 || output.decodedPaddingAlphaMaximum !== 0) {
-      errors.push("output.decodedPaddingAlphaMinimum/Maximum must both be 0 for every transparent padding row");
+      errors.push("output.decodedPaddingAlphaMinimum/Maximum must both be 0 when paddingRowCount is 0");
     }
   }
 

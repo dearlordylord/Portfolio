@@ -4,10 +4,21 @@ The H variant is intentionally a candidate, not a checked-in production codec
 asset. A normal HEVC encoder produces an opaque stream; it is not a substitute
 for Apple’s paired auxiliary alpha layer. The repository therefore includes a
 macOS/Xcode-only AVFoundation authoring command, but keeps its output in the
-ignored `motion-artifacts/hevc-alpha/` staging directory until it has passed
-the real-device gate.
+ignored `motion-artifacts/hevc-alpha-hq/` staging directory until it has passed
+the real-device gate. The canonical candidate is deliberately distinct from
+the earlier reduced asset: `hero-hevc-alpha-hq-v1`.
 
 ## One-command Apple export
+
+Materialize the canonical unreduced source from repository history into ignored
+staging once per worktree:
+
+```sh
+mkdir -p motion-artifacts/hevc-alpha-source-hq
+git archive ed50e2b -- Кадры | tar -x -C motion-artifacts/hevc-alpha-source-hq
+```
+
+The encoder rejects any other byte count or ordered source-set hash.
 
 On macOS with Xcode selected (`xcode-select --install` is not enough without
 the Xcode SDK), run the dry-run first:
@@ -16,14 +27,17 @@ the Xcode SDK), run the dry-run first:
 npm run prototype:encode:hevc-alpha -- --dry-run
 ```
 
-The dry-run decodes all 150 `Кадры/frame_%03d_delay-0.067s.webp` images with
-ImageIO, requires a real alpha channel and both transparent and visible pixels,
-checks their fixed source/display `900×507` dimensions, and asks AVAssetWriter
-whether it can apply `AVVideoCodecType.hevcWithAlpha` plus the configured alpha
-properties. The coded MOV is `900×508`: its `contentRect` is exactly
-`x=0,y=0,width=900,height=507`, followed by one explicitly cleared transparent
-bottom row. No source pixel is cropped, no `900×506` output is accepted, and no
-clean aperture is written. The dry-run writes no media or manifest. The actual export is:
+The dry-run decodes all 150 `motion-artifacts/hevc-alpha-source-hq/Кадры/frame_%03d_delay-0.067s.webp`
+images with ImageIO, requires a real alpha channel and both transparent and
+visible pixels, and checks their fixed source/display `1280×720` dimensions.
+It also verifies the ordered source-set SHA-256 is
+`1b0887fb70487d7abd0de6e1de5ed2c154ff140a645d8393e4111cf7d3807a66` (the
+unreduced archive is 20,046,600 bytes across 150 frames) before asking
+AVAssetWriter whether it can apply `AVVideoCodecType.hevcWithAlpha` plus the
+configured alpha properties. The coded MOV is also `1280×720`: its
+`contentRect` covers the complete surface, with zero padding rows and no clean
+aperture. No source pixel is cropped or resized. The dry-run writes no media or
+manifest. The actual export is:
 
 ```sh
 npm run prototype:encode:hevc-alpha -- --force
@@ -45,13 +59,12 @@ It has no ffmpeg, Homebrew, or Compressor dependency. On non-macOS hosts the
 wrapper exits with an explicit error and writes nothing. It also refuses a
 non-staging repository path unless `--allow-tracked-output` is supplied. A
 successful export is validated again through AVFoundation for one HEVC video
-track, coded `900×508` with the source content contract above, 150 samples,
+track, coded `1280×720` with the source content contract above, 150 samples,
 15 fps, 10 seconds, and the selected track's `containsAlphaChannel`
 characteristic. It then decodes every sample through `AVAssetReaderTrackOutput`
-as BGRA at `900×508`, checks the full coded alpha range and content-only range,
-and requires the designated padding row to be alpha `0` for every decoded
-sample. The measured coded/content/padding alpha ranges are recorded in the
-manifest. A writer rejection, missing/opaque input alpha, failed
+as BGRA at `1280×720`, checks the full coded/content alpha range, and records
+the not-applicable padding range as `0...0` without scanning an empty row
+range. A writer rejection, missing/opaque input alpha, failed
 sample/decoded-alpha validation, or manifest/SHA failure deletes the partial
 staging output and exits nonzero.
 
@@ -69,7 +82,7 @@ instructions. The intended handoff is:
 1. Keep the MOV and manifest under ignored staging while reviewing the
    transparent edges and seek checkpoints on macOS Safari and iOS Safari.
 2. After that review, copy the exact staged file to
-   `public/video-prototype/hero-hevc-alpha.mov`.
+   `public/video-prototype/hero-hevc-alpha-hq.mov`.
 3. Add a checked-in manifest binding the immutable URL and printed SHA-256 to
    real-device alpha evidence. The prototype query parameters are an untrusted
    manual override and do not replace this production manifest.
@@ -81,15 +94,17 @@ sidecar shape and fixed source/output contract. It intentionally cannot certify
 Apple encoding or browser alpha behavior; only AVFoundation validation plus the
 real-device evidence can do that.
 
-The supplied archive is exactly `900×507`. On the measured M2 Max/macOS 15.6
-authoring path, the geometry decision is to preserve every source pixel in a
-`900×508` coded surface with exactly one explicit transparent bottom row. The
-source/display content remains `900×507`; the manifest records both geometries,
-the `contentRect`, `paddingRowCount=1`, `paddingRowEdge=bottom`,
-`paddingAlpha=transparent`, and `cleanAperture=none`. The encoder does not crop
-to `900×506`, silently rescale, or add a clean aperture. Other Macs/SDKs still
-must pass the AVFoundation writer and decoded-row checks; a capability failure
-is reported rather than changing the contract.
+The canonical supplied archive is exactly `1280×720`, 150 frames, and
+20,046,600 bytes. The HQ geometry decision is to preserve every source pixel
+directly in a `1280×720` coded surface: `contentRect` is the complete surface,
+`paddingRowCount=0`, `paddingRowEdge=none`, `paddingAlpha=not-applicable`, and
+`cleanAperture=none`. The encoder does not crop, silently rescale, or add a
+clean aperture. Other Macs/SDKs must pass the AVFoundation and decoded-alpha
+checks; a capability failure is reported rather than changing the contract.
+
+The earlier `900×507` source and `900×508` padded MOV remain historical
+candidate evidence only. That workaround was needed for one odd-height
+authoring path and is not the HQ input, output, or runtime asset.
 
 ## Required authoring pipeline
 
@@ -119,18 +134,19 @@ seekable timeline.
 
 The H DOM element is laid out in the existing definite-size hero stage with
 `object-fit: cover`; its intrinsic coded height therefore does not size the
-stage. The diagnostic resolution intentionally reports `900×507 content ·
-coded 900×508`, and the `aspect-ratio: 900 / 507` class documents the visible
-artwork contract. C's canvas remains exactly `900×507`.
+stage. The HQ diagnostic resolution reports `1280×720 content · coded
+1280×720`, and the visible artwork contract uses `aspect-ratio: 1280 / 720`.
+C's canvas remains the independent reduced source contract until the runtime
+promotion decision is made.
 
 ## Runtime gate
 
 H measures `canPlayType()` only as an initial decoder claim. In this throwaway
 prototype it accepts an untrusted manual asset/device evidence override (for
-example `asset:hero-v1|device:macos-safari`) plus `hevcAssetId=hero-v1` before
-it requests the candidate at all. The query token is not production trust:
-shipping H requires a checked-in manifest that binds an immutable asset URL and
-hash to the real-device alpha evidence.
+example `asset:hero-hevc-alpha-hq-v1|device:macos-safari`) plus the matching
+`hevcAssetId` before it requests the candidate at all. The query token is not
+production trust: shipping H requires a checked-in manifest that binds an
+immutable asset URL and hash to the real-device alpha evidence.
 Once qualified, it keeps the direct-DOM video hidden while seekable delivery is
 prepared and shows only one lightweight static WebP frame-0 poster; it does not
 start C's frame scheduler during this runway. The prototype uses a measured
