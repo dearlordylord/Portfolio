@@ -624,9 +624,44 @@ function setupVideoElement(source: string): HTMLVideoElement {
   video.setAttribute("webkit-playsinline", "");
   video.setAttribute("muted", "");
   video.setAttribute("aria-hidden", "true");
-  video.src = source;
+  video.poster = frameSource(0);
   mediaStage.replaceChildren(video);
+  // Cloudflare Pages currently answers Range requests for these static media
+  // files with 200 rather than 206. A normal URL-backed video therefore
+  // reports seekable=[0,0] even after it is buffered, making the diagnostic
+  // controller jump back to frame 0. A blob URL is locally seekable and keeps
+  // the prototype honest. Production linear playback need not pay this cost.
+  void fetch(source)
+    .then((response) => {
+      if (!response.ok) throw new Error(`media fetch ${response.status}`);
+      return response.blob();
+    })
+    .then((blob) => {
+      if (!video.isConnected) return;
+      const objectUrl = URL.createObjectURL(blob);
+      video.dataset.objectUrl = objectUrl;
+      video.src = objectUrl;
+      video.load();
+      recordEvent(`seekable media blob ready (${formatBytes(blob.size)})`);
+    })
+    .catch((error) => {
+      if (!video.isConnected) return;
+      // Preserve a playable comparison when blob preparation itself fails;
+      // diagnostics will still expose the browser/server seek limitation.
+      video.src = source;
+      video.load();
+      recordEvent(`seekable blob failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
   return video;
+}
+
+function releaseVideoElement(video: HTMLVideoElement): void {
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  const objectUrl = video.dataset.objectUrl;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  delete video.dataset.objectUrl;
 }
 
 function playVideo(
@@ -859,9 +894,7 @@ function setupNativeVp9(run: number): Runtime | null {
       stopPresentation();
       video.removeEventListener("timeupdate", timeListener);
       video.removeEventListener("seeked", seekListener);
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      releaseVideoElement(video);
       playToggle.classList.remove("visible");
     },
   };
@@ -1197,9 +1230,7 @@ function setupPackedH264(run: number): Runtime | null {
   if (!stopWebGl) {
     if (shouldForceFailure("webgl")) injectFailure("webgl");
     else addFallbackReason("B unavailable: WebGL context/shader failed");
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
+    releaseVideoElement(video);
     mediaStage.replaceChildren();
     return null;
   }
@@ -1396,9 +1427,7 @@ function setupPackedH264(run: number): Runtime | null {
       canvas.removeEventListener("webglcontextlost", contextLostListener);
       video.removeEventListener("timeupdate", timeListener);
       video.removeEventListener("seeked", seekListener);
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
+      releaseVideoElement(video);
       playToggle.classList.remove("visible");
     },
   };
