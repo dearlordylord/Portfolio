@@ -614,7 +614,11 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
         throw EncoderError.validation("duration is \(duration)s; expected \(expectedDuration)s")
     }
 
-    let descriptions = track.formatDescriptions
+    // AVAssetTrack exposes this legacy collection as [Any] on the target SDK,
+    // while every entry is contractually a CMFormatDescription. A conditional
+    // Core Foundation cast is rejected by Swift because it always succeeds;
+    // recover the declared element type explicitly at this API boundary.
+    let descriptions = track.formatDescriptions.map { $0 as! CMFormatDescription }
     let codecTypes = descriptions.map(CMFormatDescriptionGetMediaSubType)
     let hasHEVCCodec = codecTypes.contains {
         $0 == kCMVideoCodecType_HEVC || $0 == kCMVideoCodecType_HEVCWithAlpha
