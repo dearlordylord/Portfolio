@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { HERO_NATIVE_H_UNDERFLOW_GRACE_MS } from "../../src/motion/hero-native-watchdog";
 
 type DiagnosticsSnapshot = {
   viewport: { innerWidth: number; innerHeight: number; dpr: number };
@@ -72,6 +73,14 @@ type DiagnosticsSnapshot = {
         fallback: { from: "h" | "a" | "c"; to: "c"; reason: string } | null;
         source: string | null;
         assetId: string | null;
+        nativeHWatchdog: {
+          status: "inactive" | "monitoring" | "tripped";
+          lastPresentedFrame: number | null;
+          lastProgressAtMs: number | null;
+          noProgressSinceMs: number | null;
+          waiting: boolean;
+          stalled: boolean;
+        };
       };
       events: Array<{ timeMs: number; from: string; event: string; to: string; reason: string }>;
     };
@@ -188,6 +197,52 @@ async function forceProductionVp9(page: Page): Promise<void> {
       if (type.includes("vp09")) return "probably";
       return nativeCanPlayType.call(this, type);
     };
+  });
+}
+
+async function forceProductionHevc(page: Page): Promise<void> {
+  // Exercise the production H branch in Chromium without changing the
+  // renderer policy itself. The media route remains pending in the test, so
+  // this checks source wiring synchronously before any decoder outcome can
+  // trigger the normal C fallback.
+  await page.addInitScript(() => {
+    const nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function canPlayType(type: string): CanPlayTypeResult {
+      if (type.includes("hvc1")) return "probably";
+      return nativeCanPlayType.call(this, type);
+    };
+    Object.defineProperty(navigator, "vendor", {
+      configurable: true,
+      value: "Apple Computer, Inc.",
+    });
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1",
+    });
+
+    let fetchCount = 0;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = ((...args: Parameters<typeof window.fetch>) => {
+      fetchCount += 1;
+      return nativeFetch(...args);
+    }) as typeof window.fetch;
+
+    let objectUrlCount = 0;
+    const nativeCreateObjectUrl = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = ((...args: Parameters<typeof URL.createObjectURL>) => {
+      objectUrlCount += 1;
+      return nativeCreateObjectUrl(...args);
+    }) as typeof URL.createObjectURL;
+    let loadCount = 0;
+    const nativeLoad = HTMLMediaElement.prototype.load;
+    HTMLMediaElement.prototype.load = function load(): void {
+      loadCount += 1;
+      nativeLoad.call(this);
+    };
+    Object.defineProperty(window, "__heroNativeDeliveryProbe", {
+      configurable: true,
+      value: () => ({ fetchCount, objectUrlCount, loadCount }),
+    });
   });
 }
 
@@ -884,6 +939,254 @@ test("production A becomes visible only after decoded alpha readiness and report
   expect(current.scenes.hero.renderer).toMatchObject({ active: "a", preparation: "ready", visible: true });
   expect(current.scenes.hero.renderer.presentedFrame, JSON.stringify(current.scenes.hero)).toBeGreaterThan(31);
   expect(current.scenes.hero.renderer.presentedFrame).toBeLessThanOrEqual(current.scenes.hero.targetFrame + 3);
+});
+
+test("production H assigns the immutable R2 URL directly without Blob preparation", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Direct H source wiring is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  const expectedSource = "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov";
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe(expectedSource);
+  const current = await snapshot(page);
+  expect(current.scenes.hero.renderer).toMatchObject({
+    requested: "h",
+    active: "h",
+    preparation: "hidden",
+    visible: false,
+    source: expectedSource,
+    assetId: "hero-hevc-alpha-hq-v1",
+  });
+  await expect(page.locator("#hero-native-stage video")).toHaveCount(1);
+  expect(await page.locator("#hero-native-stage video").evaluate((video) => ({
+    src: (video as HTMLVideoElement).src,
+    attribute: video.getAttribute("src"),
+  }))).toEqual({ src: expectedSource, attribute: expectedSource });
+  expect(await page.evaluate(() => (window as typeof window & {
+    __heroNativeDeliveryProbe?: () => { fetchCount: number; objectUrlCount: number; loadCount: number };
+  }).__heroNativeDeliveryProbe?.())).toEqual({ fetchCount: 0, objectUrlCount: 0, loadCount: 1 });
+
+  releaseMediaRoute();
+});
+
+test("accepted H stays mounted and paused at the terminal frame after navigation", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native release coverage is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+  await page.addInitScript(() => {
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function play(): Promise<void> {
+      if (this.classList.contains("hero-native-video")) return Promise.resolve();
+      return nativePlay.call(this);
+    };
+  });
+  await installPausedClock(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  const expectedSource = "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov";
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe(expectedSource);
+
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    video.dispatchEvent(new Event("loadeddata"));
+    video.dispatchEvent(new Event("canplay"));
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
+    .toBe("ready");
+  expect((await snapshot(page)).scenes.hero.renderer.visible).toBe(true);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  const released = await snapshot(page);
+  expect(released.scenes.hero).toMatchObject({
+    phase: "released",
+    renderer: {
+      active: "h",
+      preparation: "ready",
+      visible: true,
+      source: expectedSource,
+    },
+  });
+  const terminal = await page.locator("#hero-native-stage video").evaluate((video) => ({
+    src: (video as HTMLVideoElement).src,
+    paused: (video as HTMLVideoElement).paused,
+    currentTime: (video as HTMLVideoElement).currentTime,
+    visibility: (video as HTMLElement).style.visibility,
+  }));
+  expect(terminal.src).toBe(expectedSource);
+  expect(terminal.paused).toBe(true);
+  expect(terminal.currentTime).toBeCloseTo(149 / 15, 2);
+  expect(terminal.visibility).toBe("visible");
+  releaseMediaRoute();
+});
+
+test("H timeupdate/currentTime changes without rVFC still trip the presentation watchdog", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native watchdog coverage is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+  await page.addInitScript(() => {
+    const nativePlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function play(): Promise<void> {
+      if (this.classList.contains("hero-native-video")) return Promise.resolve();
+      return nativePlay.call(this);
+    };
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await installPausedClock(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  const expectedSource = "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov";
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe(expectedSource);
+
+  await page.locator("#hero-native-stage video").evaluate((video) => {
+    let syntheticCurrentTime = 0;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => syntheticCurrentTime,
+      set: (value: number) => {
+        syntheticCurrentTime = value;
+      },
+    });
+    video.dispatchEvent(new Event("loadeddata"));
+    video.dispatchEvent(new Event("canplay"));
+    // These are changing media positions, but no frame-presentation callback
+    // is delivered. The H watchdog must keep its deadline on actual rVFC
+    // evidence rather than treating timeupdate/currentTime as presentation.
+    for (const frame of [1, 2, 3, 4]) {
+      syntheticCurrentTime = frame / 15;
+      video.dispatchEvent(new Event("timeupdate"));
+    }
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.preparation, { timeout: 5_000 })
+    .toBe("ready");
+
+  await page.clock.runFor(HERO_NATIVE_H_UNDERFLOW_GRACE_MS + 1);
+  const fallback = await snapshot(page);
+  expect(fallback.scenes.hero.renderer).toMatchObject({
+    active: "c",
+    fallback: {
+      from: "h",
+      to: "c",
+      reason: expect.stringContaining("underflow-grace-exceeded"),
+    },
+  });
+  expect(fallback.scenes.hero.renderer.nativeHWatchdog.status).toBe("inactive");
+  releaseMediaRoute();
+});
+
+test("pending H navigation cancels preparation without late exposure or C startup", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("chromium-desktop"), "Native lifecycle coverage is covered by the desktop Chromium project");
+  test.setTimeout(30_000);
+  await prepareLocalPage(page);
+  await forceProductionHevc(page);
+  await installPausedClock(page);
+
+  let releaseMediaRoute = (): void => undefined;
+  const mediaPending = new Promise<void>((resolve) => {
+    releaseMediaRoute = () => resolve();
+  });
+  await page.route("https://media.curatorman.com/**", async (route) => {
+    await mediaPending;
+    await route.abort();
+  });
+  await page.goto("/?motionDiagnostics=1&heroRenderer=h&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  const expectedSource = "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov";
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.renderer.source, { timeout: 5_000 })
+    .toBe(expectedSource);
+  await page.evaluate(() => {
+    const video = document.querySelector<HTMLVideoElement>("#hero-native-stage video");
+    if (!video) throw new Error("pending H video is missing");
+    (window as typeof window & { __pendingHVideo?: HTMLVideoElement }).__pendingHVideo = video;
+    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+
+  let released = await snapshot(page);
+  expect(released.scenes.hero).toMatchObject({
+    phase: "released",
+    readinessWatchdogPending: false,
+    renderer: {
+      source: null,
+      visible: false,
+      nativeHWatchdog: {
+        status: "inactive",
+        waiting: false,
+        stalled: false,
+      },
+    },
+  });
+  expect(released.scenes.hero.assets.laterQueueStarted).toBe(false);
+  expect(released.scenes.hero.assets.requested).toBeLessThanOrEqual(1);
+
+  // Dispatch the events that previously could arrive after navigation. The
+  // detached candidate must remain inert and must not accept H or start C.
+  await page.evaluate(() => {
+    const video = (window as typeof window & { __pendingHVideo?: HTMLVideoElement }).__pendingHVideo;
+    video?.dispatchEvent(new Event("loadeddata"));
+    video?.dispatchEvent(new Event("canplay"));
+  });
+  await page.clock.runFor(4_001);
+  released = await snapshot(page);
+  expect(released.scenes.hero).toMatchObject({
+    phase: "released",
+    renderer: { source: null, visible: false },
+  });
+  expect(released.scenes.hero.assets.laterQueueStarted).toBe(false);
+  expect(released.scenes.hero.assets.requested).toBeLessThanOrEqual(1);
+  releaseMediaRoute();
 });
 
 test("late native failure hands off to C without rewinding timeline, CTA, or mobile input", async ({ page }, testInfo) => {

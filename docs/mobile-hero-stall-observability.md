@@ -1,7 +1,7 @@
 # Mobile hero stall observability
 
 **Checked:** 2026-08-28  
-**Status:** delivery acceptance foundation; product playback is unchanged
+**Status:** R2 delivery gate GREEN; direct H streaming is implemented; cellular playback remains a separate device gate
 **Scope:** the reported iPhone-on-cellular case where the first-screen hero appears to stop before its terminal frame.
 
 ## Conclusion
@@ -25,11 +25,16 @@ The user tested the current Cloudflare Pages staging build on a real iPhone
 over a mobile network. Two related symptoms must remain separate in future
 work:
 
-1. **Slow initial loading.** The qualified iPhone Safari path (H) currently
-   fetches and SHA-256 verifies the complete 11,151,391-byte HQ HEVC-alpha MOV
-   before assigning a Blob URL to the hidden video. The preparation deadline is
-   four seconds. On a cellular connection, H can therefore time out before the
-   full file arrives and fall directly to C.
+1. **Slow initial loading.** Before the R2 migration, the qualified iPhone
+   Safari path (H) fetched and SHA-256 verified the complete 11,151,391-byte HQ
+   HEVC-alpha MOV before assigning a Blob URL to the hidden video. The
+   preparation deadline was four seconds, so a cellular connection could time
+   out before the full file arrived and fall directly to C. H now assigns its
+   immutable R2 URL directly to the DOM video; the native media stack can
+   request only the startup ranges it needs. H preparation is still bounded by
+   its four-second deadline; after an H failure, C has its separate three-second
+   readiness watchdog, so the worst-case first-screen input lock is roughly
+   seven seconds, not an unbounded wait.
 2. **An apparent freeze before the animation finishes.** After the long load,
    the animation appeared to stop around the middle. We do not yet know whether
    this was the intentional frame-31 checkpoint, H-to-C fallback followed by C
@@ -37,19 +42,48 @@ work:
    or fix it from appearance alone; capture the trace proposed below first.
 
 The slow-loading observation and the freeze may share a cause, but that is not
-yet proven. In particular, H and A play from a complete local Blob once they
-are exposed, so cellular buffering cannot explain a native mid-playback stall
-after Blob preparation. Cellular speed can still cause the earlier H timeout
-and make the subsequent demand-loaded C renderer visibly wait for frames.
+yet proven. Before this migration, H and A played from a complete local Blob
+once exposed. H now streams from R2, while A retains that Blob preparation
+behavior; cellular buffering can therefore affect H during playback, and can
+still cause A's earlier timeout or make the subsequent demand-loaded C renderer
+visibly wait for frames. The runtime trace must distinguish a delivery
+underflow from a decoder or sequence-rendering stop.
 
 On 2026-08-28 the deployed Pages asset was probed with
 `Range: bytes=0-1023`. Pages returned `HTTP 200`,
 `Content-Length: 11151391`, and the complete `video/quicktime` object rather
-than `206 Partial Content`. This measured behavior is why the runtime currently
-uses a full Blob; it is also the delivery constraint the next migration must
-remove.
+than `206 Partial Content`. This was the protocol RED baseline that motivated
+the migration. After moving the exact bytes to
+`https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov` and
+saving the custom-domain cache rule, the same probe passed on 2026-08-28:
+startup metadata `206`/2,135 bytes (146 ms, `CF-Cache-Status: HIT`), full
+object `200` with 11,151,391 exact bytes, valid first/middle/suffix/open-ended
+`206` ranges, valid unsatisfied `416`, stable ETag
+`"09df1231018803dac3dd0bf03445eba7"`, and warm cache `HIT` with numeric
+`Age` (648 s at completion). The checked-in MOV SHA-256 remained
+`54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c`.
+This is protocol-only GREEN evidence; it does not prove fast cellular startup
+or continuous iPhone frame presentation.
 
-## Proposed streaming-origin migration
+## Production asset inventory
+
+The production ladder still has three choices, but only H's authored MOV moved
+to the streaming origin:
+
+- **H:** the exact HEVC-alpha MOV at the immutable R2 URL above, assigned
+  directly to a native DOM video only for the user-confirmed iPhone Safari
+  profile. It keeps the hidden poster/readiness gate, four-second fail-open,
+  post-readiness 750 ms presented-frame underflow guard, and C fallback; it
+  does not call `fetch()`, create a Blob/object URL, or hash the file in the
+  browser.
+- **A:** `/video-prototype/hero-alpha-vp9.webm`, direct DOM VP9-alpha for
+  qualified non-Safari browsers. Its existing fetch-to-Blob preparation and
+  decoded-alpha probe are unchanged.
+- **C:** the bounded WebP frame sequence, the universal correctness fallback.
+  The packed H.264/matte/WebGL variants and prototype comparison page remain
+  draft-only and are not selected by the production page.
+
+## Streaming-origin migration (implemented)
 
 Use **Cloudflare R2 Standard storage behind a custom media domain** for the
 exact authored MOV. Do not use Cloudflare Stream: Stream automatically
@@ -60,7 +94,9 @@ that the exact uploaded Stream file is not the downloadable playback asset.
 [Stream uploads](https://developers.cloudflare.com/stream/uploading-videos/),
 [Stream FAQ](https://developers.cloudflare.com/stream/faq/))
 
-Recommended rollout:
+The following rollout is now the production decision and its protocol gate has
+passed. Keep the sequence as the repeatable procedure for replacing this
+versioned asset in the future:
 
 1. Create an R2 Standard bucket and upload the validated MOV plus its manifest
    under a versioned immutable key such as
@@ -78,7 +114,10 @@ Recommended rollout:
    ([Cloudflare default cache behavior](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/))
 3. Configure CORS for the portfolio origin and expose the headers needed to
    verify delivery (`Content-Length`, `Content-Range`, `Accept-Ranges`, `ETag`,
-   and cache status). Purge cached objects after changing CORS.
+   and cache status). `Accept-Ranges: bytes` is required on the `HEAD` and
+   complete `200` capability responses; it is advisory and need not be
+   repeated on otherwise valid `206` or `416` range responses. Purge cached
+   objects after changing CORS.
    ([R2 CORS](https://developers.cloudflare.com/r2/buckets/cors/))
 4. Before changing the site, gate the origin with automated requests for the
    startup metadata range, first, middle, suffix, Safari-style nonzero
@@ -111,12 +150,13 @@ Recommended rollout:
    the first layer of infrastructure.
    ([R2 Workers ranged reads](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/),
    [Workers cache Range behavior](https://developers.cloudflare.com/workers/cache/configuration/#range-requests))
-6. Only after the origin passes the gate, point H directly at the versioned
-   media URL and remove the client-side full-Blob download. Keep H hidden until
+6. **Done 2026-08-28.** After the origin passed the gate, H was pointed directly at the versioned
+   media URL and the client-side full-Blob download was removed. Keep H hidden until
    media readiness, retain the four-second fail-open during rollout, and keep C
    as the correctness fallback. Replace per-client whole-file hashing with
    deployment-time SHA-256 verification plus the immutable URL/ETag; otherwise
-   streaming would be defeated by downloading the entire file again.
+   streaming would be defeated by downloading the entire file again. This is
+   now the selected production implementation.
 
 The acceptance probe for step 4 is deliberately a command-line check, not a
 browser diagnostic window. After the R2/custom-domain object is available,
@@ -124,8 +164,8 @@ run it with the exact media URL:
 
 ```sh
 npm run probe:media-origin -- \
-  --url https://media.example.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov \
-  --origin https://portfolio.example \
+  --url https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov \
+  --origin https://prototype-video-hero.portfolio-motion-staging.pages.dev \
   # optionally enforce an origin-only startup latency budget:
   # --startup-range-max-ms 750
 # or: MEDIA_ORIGIN_URL=https://media.example.com/... \
@@ -138,10 +178,13 @@ top-level `moov` box, before any full-object request. It then performs `HEAD`,
 a complete cache-prime observation, a second warm `GET`, and warm metadata/
 first/middle/suffix/open-ended (`bytes=N-`, bounded near the tail) and invalid ranges. It requires the expected
 `200`/`206`/`416` statuses, exact `Content-Length` and `Content-Range`,
-`video/quicktime`, `Accept-Ranges: bytes`, no `Content-Encoding`, one stable
-non-empty `ETag`, explicit CORS for the supplied site Origin, all range/
-identity/cache headers exposed, and `public, max-age=31536000, immutable`
-cache semantics. The second full response must report Cloudflare
+`video/quicktime`, `Accept-Ranges: bytes` on the `HEAD` and complete `200`
+capability responses, no `Content-Encoding`, one stable non-empty `ETag`,
+explicit CORS for the supplied site Origin, all range/identity/cache headers
+exposed, and `public, max-age=31536000, immutable` cache semantics. A `206`
+must instead prove the requested `Content-Range`, exact length, and exact
+checked bytes; a `416` must prove the unsatisfied range. Neither partial
+response needs to repeat the advisory `Accept-Ranges` header. The second full response must report Cloudflare
 `CF-Cache-Status: HIT` with a numeric `Age`, proving that the prime request was
 cacheable and the next request was served warm. The startup request's cache
 state is reported but is never required to be `MISS`, because a true cold
@@ -175,13 +218,17 @@ to be presented.
 
 Production chooses H (direct DOM HEVC alpha) only for the qualified iPhone
 Safari profile, A (direct DOM VP9 alpha) for a qualified non-Safari browser, and
-C (the bounded WebP sequence) otherwise. H/A are fetched into a Blob, shown only
-after the hidden candidate is ready, and currently observe
+C (the bounded WebP sequence) otherwise. H assigns its immutable R2 URL
+directly to a DOM video; A is still fetched into a Blob. Both native candidates
+are shown only after the hidden candidate is ready, and currently observe
 `loadedmetadata`/`loadeddata`/`canplay`/`playing`/`timeupdate`/`error` plus
-`requestVideoFrameCallback()`'s `mediaTime`. C exposes target, display, and
-rendered frames plus image readiness counts. Those fields are useful, but there
-is no event history or media-buffer state, so a single snapshot cannot establish
-why progress stopped.
+`requestVideoFrameCallback()`'s `mediaTime`. Accepted H additionally arms a
+750 ms no-forward-presented-frame guard during intro/playing; it records
+`waiting`/`stalled`, suppresses corrective seeks/repeated play attempts during
+that grace window, and then uses the existing frame-preserving H→C handoff.
+C exposes target, display, and rendered frames plus image readiness counts.
+Those fields are useful, but there is no event history or media-buffer state,
+so a single snapshot cannot establish why progress stopped.
 
 The shared contract makes the likely false positive explicit: frame **31** is
 the end of the automatic intro (`1,400 ms`) and the `ready` checkpoint. The
@@ -229,11 +276,13 @@ events](https://html.spec.whatwg.org/multipage/media.html#network-states),
 [HTML ready states](https://html.spec.whatwg.org/multipage/media.html#ready-states),
 [HTML buffered ranges](https://html.spec.whatwg.org/multipage/media.html#dom-media-buffered))
 
-Because H/A are downloaded by `fetch()` before the Blob URL is attached, also
-record candidate preparation start/end, response status, Blob bytes, and the
-four-second deadline/fallback event. `video.networkState` alone cannot
-describe that earlier fetch. C needs per-frame load start/end/failure times in
-addition to its existing queue counts.
+For H, record candidate preparation start/end, the media element's
+`networkState`/ready-state transitions, request timing from the device network
+trace, the four-second preparation deadline/fallback event, and the bounded
+post-readiness underflow guard (presented-frame progress, `waiting`/`stalled`,
+and H→C handoff). For A, retain the existing fetch response status and Blob-byte
+observations as well. C needs per-frame load start/end/failure times in addition
+to its existing queue counts.
 
 ## Deterministic classification
 

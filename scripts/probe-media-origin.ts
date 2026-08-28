@@ -167,8 +167,14 @@ export function validateCommonHeaders(response: ProbeResponse, expectedLength: n
   const contentType = normalizeContentType(response.headers.get("content-type"));
   if (contentType !== expectedType) throw new Error(`Content-Type ${contentType} != expected ${expectedType}`);
   if (response.headers.get("content-encoding")?.trim()) throw new Error(`Content-Encoding must be absent, got ${response.headers.get("content-encoding")}`);
-  const acceptRanges = response.headers.get("accept-ranges")?.toLowerCase().split(",").map((value) => value.trim());
-  if (!acceptRanges?.includes("bytes")) throw new Error("missing Accept-Ranges: bytes");
+  // Accept-Ranges is capability evidence on a complete response, but it is
+  // advisory and commonly omitted from a valid partial response. A 206 has
+  // already proved range support through its status, Content-Range, length,
+  // and checked body bytes; requiring this header again rejects valid origins.
+  if (response.status === 200) {
+    const acceptRanges = response.headers.get("accept-ranges")?.toLowerCase().split(",").map((value) => value.trim());
+    if (!acceptRanges?.includes("bytes")) throw new Error("missing Accept-Ranges: bytes");
+  }
   const etag = response.headers.get("etag")?.trim();
   if (!etag) throw new Error("missing ETag");
   if (expectedEtag !== undefined && etag !== expectedEtag) throw new Error(`ETag changed from ${expectedEtag} to ${etag}`);

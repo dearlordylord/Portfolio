@@ -24,6 +24,11 @@ import {
 } from "../motion/scheduler";
 import { BoundedFrameCache, prefetchFrames } from "../motion/sequence-cache";
 import {
+  advanceNativeHWatchdog,
+  initialNativeHWatchdogState,
+  type NativeHWatchdogState,
+} from "../motion/hero-native-watchdog";
+import {
   fallbackProductionHeroRenderer,
   HEVC_ALPHA_PRODUCTION_ASSET,
   HERO_NATIVE_CONTENT_HEIGHT,
@@ -72,6 +77,9 @@ export const HERO_C_LOAD_CONCURRENCY = 4;
 export const HERO_C_INTRO_LOAD_CONCURRENCY = 8;
 /** Absolute resident + in-flight upper bound for C's decoded image resources. */
 export const HERO_C_MAX_DECODED_RESOURCES = HERO_C_FRAME_CACHE_CAPACITY + HERO_C_INTRO_LOAD_CONCURRENCY;
+// C's separate readiness watchdog. The native H preparation deadline is four
+// seconds; if H fails after that handoff, this three-second C watchdog is the
+// remaining bounded input-lock window (worst case roughly seven seconds).
 // A browser that cannot deliver either load/error (or leaves every image
 // unusable) must not keep the page's native input captive indefinitely.
 const HERO_READINESS_TIMEOUT_MS = 3_000;
@@ -279,6 +287,14 @@ export type HeroSceneSnapshot = {
     fallback: { from: ProductionHeroRenderer; to: "c"; reason: string } | null;
     source: string | null;
     assetId: string | null;
+    nativeHWatchdog: {
+      status: NativeHWatchdogState["status"];
+      lastPresentedFrame: number | null;
+      lastProgressAtMs: number | null;
+      noProgressSinceMs: number | null;
+      waiting: boolean;
+      stalled: boolean;
+    };
   };
   events: readonly HeroSceneEvent[];
 };
@@ -534,6 +550,10 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   let nativeVideoFrameHandle: number | null = null;
   let nativeStopped = false;
   let nativePlaybackPhase: HeroPhase | null = null;
+  let nativeHWatchdogState: NativeHWatchdogState = initialNativeHWatchdogState();
+  // A keeps its existing Blob preparation path. H is deliberately excluded:
+  // Safari must own range requests through the media element so startup and
+  // seeking never depend on a client-side full-object fetch.
   let nativeFetchController: AbortController | null = null;
   let nativeObjectUrl: string | null = null;
   let nativeSource: string | null = null;
@@ -658,6 +678,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     phaseStartTime = null;
     recordEvent(event, previous, next, reason);
     if (next === "reduced") {
+      resetNativeHWatchdog();
       if (readinessTimer !== null) {
         timerApi.clearTimeout(readinessTimer);
         readinessTimer = null;
@@ -761,6 +782,55 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     );
   }
 
+  function resetNativeHWatchdog(): void {
+    nativeHWatchdogState = initialNativeHWatchdogState();
+  }
+
+  function observeNativeHWatchdog(
+    atMs: number,
+    signals: Readonly<{ waiting?: boolean; stalled?: boolean; recovery?: boolean }> = {},
+  ): void {
+    const active = rendererActive === "h"
+      && nativeVisible
+      && !nativeStopped
+      && nativeVideo !== null;
+    const motionExpected = active
+      && isVisible
+      && !reducedMotion
+      && (phase === "intro" || phase === "playing");
+    const atTarget = !motionExpected;
+    const result = advanceNativeHWatchdog(
+      nativeHWatchdogState,
+      {
+        atMs,
+        active,
+        motionExpected,
+        atTarget,
+        presentedFrame: nativePresentedFrame,
+        ...signals,
+      },
+    );
+    nativeHWatchdogState = result.state;
+    if (result.action === "fallback") {
+      const silenceMs = result.state.lastProgressAtMs === null
+        ? "unknown"
+        : `${Math.max(0, atMs - result.state.lastProgressAtMs)}ms`;
+      failNativeCandidate(
+        `${result.reason}: H presented-frame progress stalled for ${silenceMs}`
+          + ` (waiting=${result.state.waiting}; stalled=${result.state.stalled})`,
+      );
+    }
+  }
+
+  function nativeHRecoveryRequestsSuppressed(): boolean {
+    return rendererActive === "h"
+      && (
+        nativeHWatchdogState.waiting
+        || nativeHWatchdogState.stalled
+        || nativeHWatchdogState.noProgressSinceMs !== null
+      );
+  }
+
   function stopNativeFrameObservation(): void {
     const video = nativeVideo as (HTMLVideoElement & {
       cancelVideoFrameCallback?: (handle: number) => void;
@@ -784,6 +854,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         nativeVideoFrameHandle = null;
         if (nativeStopped || nativeVideo !== video) return;
         updateNativePresentedFrame(metadata.mediaTime);
+        observeNativeHWatchdog(nowMs());
         observe();
       });
     };
@@ -792,6 +863,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function stopNativeCandidate(): void {
     nativeStopped = true;
+    resetNativeHWatchdog();
     nativeFetchController?.abort();
     nativeFetchController = null;
     clearNativePreparationTimer();
@@ -825,6 +897,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
    */
   function suspendNativeCandidateForHandoff(): void {
     nativeStopped = true;
+    resetNativeHWatchdog();
     nativeFetchController?.abort();
     nativeFetchController = null;
     clearNativePreparationTimer();
@@ -936,6 +1009,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   function acceptNativeCandidate(kind: "h" | "a"): void {
     if (disposed || nativeStopped || rendererActive !== kind || !nativeVideo) return;
     clearNativePreparationTimer();
+    if (kind === "h") resetNativeHWatchdog();
     rendererPreparation = "ready";
     nativeVisible = true;
     addClass(elements.nativeStage, "visible");
@@ -1008,18 +1082,6 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     };
   }
 
-  async function verifyNativeBlob(kind: "h" | "a", blob: Blob): Promise<Blob> {
-    if (kind !== "h") return blob;
-    const subtle = browserWindow.crypto?.subtle;
-    if (!subtle) throw new Error("Web Crypto SHA-256 is unavailable");
-    const digest = await subtle.digest("SHA-256", await blob.arrayBuffer());
-    const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (actual !== HERO_NATIVE_H_SHA256) {
-      throw new Error(`asset SHA-256 mismatch: ${actual}`);
-    }
-    return blob;
-  }
-
   function prepareNativeCandidate(kind: "h" | "a"): void {
     rendererActive = kind;
     rendererPreparation = "hidden";
@@ -1078,23 +1140,45 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     };
     const onLoadedMetadata = (): void => {
       syncNativeGeometry();
-      updateNativePresentedFrame(video.currentTime);
+      // Before H is accepted this establishes a frame-0 baseline; after
+      // readiness, only rVFC metadata is allowed to advance H presentation
+      // evidence. A can keep its existing currentTime diagnostics.
+      if (kind !== "h" || !nativeVisible) updateNativePresentedFrame(video.currentTime);
+      observeNativeHWatchdog(nowMs());
       recordEvent("native-loadedmetadata", kind, kind, `${video.videoWidth}×${video.videoHeight}`);
     };
     const onLoadedData = (): void => {
       loadedData = true;
-      updateNativePresentedFrame(video.currentTime);
+      if (kind !== "h" || !nativeVisible) updateNativePresentedFrame(video.currentTime);
       maybeAccept();
+      observeNativeHWatchdog(nowMs());
     };
     const onCanPlay = (): void => {
       canPlay = true;
       maybeAccept();
+      observeNativeHWatchdog(nowMs(), { recovery: true });
     };
-    const onTimeUpdate = (): void => updateNativePresentedFrame(video.currentTime);
+    const onTimeUpdate = (): void => {
+      // `timeupdate` reports media position, not a frame that reached the
+      // screen. H's watchdog receives presentation progress only from rVFC;
+      // A retains its pre-existing currentTime bridge.
+      if (kind !== "h") updateNativePresentedFrame(video.currentTime);
+      observeNativeHWatchdog(nowMs());
+    };
     const onPlaying = (): void => {
-      updateNativePresentedFrame(video.currentTime);
+      if (kind !== "h") updateNativePresentedFrame(video.currentTime);
+      observeNativeHWatchdog(nowMs(), { recovery: true });
       observeNativePresentedFrame(video);
     };
+    const onWaiting = (): void => {
+      recordEvent("native-waiting", kind, kind, "native media waiting for the next frame");
+      observeNativeHWatchdog(nowMs(), { waiting: true });
+    };
+    const onStalled = (): void => {
+      recordEvent("native-stalled", kind, kind, "native media fetch stalled");
+      observeNativeHWatchdog(nowMs(), { stalled: true });
+    };
+    const onProgress = (): void => observeNativeHWatchdog(nowMs(), { recovery: true });
     const onError = (): void => {
       const detail = video.error ? `code ${video.error.code}${video.error.message ? ` (${video.error.message})` : ""}` : "unknown media error";
       failNativeCandidate(`${kind.toUpperCase()} media error: ${detail}`);
@@ -1104,6 +1188,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     video.addEventListener("canplay", onCanPlay);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("playing", onPlaying);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onStalled);
+    video.addEventListener("progress", onProgress);
     video.addEventListener("error", onError);
     nativeMediaListenersStop = () => {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
@@ -1111,6 +1198,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("stalled", onStalled);
+      video.removeEventListener("progress", onProgress);
       video.removeEventListener("error", onError);
     };
     if (kind === "a") {
@@ -1126,28 +1216,36 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     // The poster is the only image loaded while a native candidate is being
     // qualified. The full C sequence starts only after a candidate fails.
     addClass(elements.loader, "hidden");
-    const fetchController = new AbortController();
-    nativeFetchController = fetchController;
-    void browserWindow.fetch(source, { signal: fetchController.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`media response ${response.status}`);
-        return response.blob();
-      })
-      .then((blob) => verifyNativeBlob(kind, blob))
-      .then((blob) => {
-        if (nativeStopped || nativeVideo !== video || fetchController.signal.aborted) return;
-        if (blob.size <= 0) throw new Error("empty media Blob");
-        nativeFetchController = null;
-        const objectUrl = URL.createObjectURL(blob);
-        nativeObjectUrl = objectUrl;
-        video.src = objectUrl;
-        video.load();
-      })
-      .catch((error: unknown) => {
-        if (fetchController.signal.aborted || nativeStopped) return;
-        nativeFetchController = null;
-        failNativeCandidate(`native ${kind.toUpperCase()} delivery failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
+    if (kind === "h") {
+      // This assignment is intentionally synchronous. Setting a direct,
+      // immutable R2 URL lets the native media stack issue byte-range
+      // requests; fetching a Blob here would defeat streaming and delay
+      // Safari's first usable frame by the entire 11.2 MB download.
+      video.src = source;
+      video.load();
+    } else {
+      const fetchController = new AbortController();
+      nativeFetchController = fetchController;
+      void browserWindow.fetch(source, { signal: fetchController.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`media response ${response.status}`);
+          return response.blob();
+        })
+        .then((blob) => {
+          if (nativeStopped || nativeVideo !== video || fetchController.signal.aborted) return;
+          if (blob.size <= 0) throw new Error("empty media Blob");
+          nativeFetchController = null;
+          const objectUrl = URL.createObjectURL(blob);
+          nativeObjectUrl = objectUrl;
+          video.src = objectUrl;
+          video.load();
+        })
+        .catch((error: unknown) => {
+          if (fetchController.signal.aborted || nativeStopped) return;
+          nativeFetchController = null;
+          failNativeCandidate(`native ${kind.toUpperCase()} delivery failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
     render();
   }
 
@@ -1642,12 +1740,20 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       nativePlaybackPhase = phase;
       video.playbackRate = phase === "intro" ? nativeIntroPlaybackRate() : nativeMainPlaybackRate();
       // Let the native decoder play continuously; correct only a visible
-      // drift so rVFC/timeupdate remain close to the contract's target frame.
-      if (phaseChanged || Math.abs(currentTime - targetSeconds) > 0.2) {
+      // drift so native presentation remains close to the contract's target frame.
+      // Once H has signalled an underflow or has entered its no-progress
+      // grace window, avoid issuing corrective seeks or repeated play calls:
+      // those requests can amplify the range/decoder stall we are measuring.
+      const hProgressGuarded = nativeHRecoveryRequestsSuppressed();
+      if (!hProgressGuarded && (phaseChanged || Math.abs(currentTime - targetSeconds) > 0.2)) {
         video.currentTime = targetSeconds;
-        updateNativePresentedFrame(targetSeconds);
+        // A seek request changes the decoder's position, not the frame that
+        // has actually reached the screen. H's watchdog must wait for
+        // rVFC evidence; counting this command as presentation
+        // would reset the underflow deadline while the video is still stuck.
+        if (rendererActive !== "h") updateNativePresentedFrame(targetSeconds);
       }
-      if (video.paused) {
+      if (video.paused && !hProgressGuarded) {
         void video.play().catch((error: unknown) => {
           failNativeCandidate(`native ${rendererActive.toUpperCase()} playback failed: ${error instanceof Error ? error.message : String(error)}`);
         });
@@ -1660,7 +1766,9 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (phase === "ready" || phase === "complete" || phase === "exit-hold" || phase === "released" || phase === "reduced") {
       if (phaseChanged || Math.abs(currentTime - targetSeconds) > 0.02) {
         video.currentTime = targetSeconds;
-        updateNativePresentedFrame(targetSeconds);
+        // Keep H's presented-frame evidence tied to media events. A remains
+        // on its existing seek bookkeeping because its watchdog is inactive.
+        if (rendererActive !== "h") updateNativePresentedFrame(targetSeconds);
       }
     }
   }
@@ -1702,10 +1810,30 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     else displayFrame = targetFrame;
     if (Math.abs(displayFrame - targetFrame) < 0.02) displayFrame = targetFrame;
     render();
+    // Sample the watchdog before playback synchronisation so an unchanged H
+    // frame starts its bounded grace window before any corrective seek/play
+    // request can be considered. This keeps the no-feedback rule explicit.
+    observeNativeHWatchdog(timestampMs);
     syncNativePlayback();
 
     if (phase === "intro" || phase === "playing" || phase === "exit-hold") return true;
     return Math.abs(displayFrame - targetFrame) >= 0.02;
+  }
+
+  function settleOrStopNativeOnRelease(): void {
+    // A hidden candidate owns no visible state and can be fully canceled.
+    // Once native playback has been accepted, keep its surface and source
+    // mounted so the terminal 14+ visual remains available on scroll-back.
+    if (!nativeVisible && (nativeVideo || nativePoster)) {
+      stopNativeCandidate();
+      return;
+    }
+    // A pending handoff is already paused and remains visible until C has a
+    // matching decoded frame. Tearing it down here would reintroduce a blank
+    // or frame-0 blink during navigation.
+    if (nativeVisible && nativeVideo && !nativeStopped && !pendingNativeHandoff) {
+      syncNativePlayback();
+    }
   }
 
   function advanceFromReady(reason: string): void {
@@ -1715,6 +1843,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function releaseHero(reason: string): void {
+    resetNativeHWatchdog();
     clearReadinessTimer();
     if (exitHoldTimer !== null) {
       timerApi.clearTimeout(exitHoldTimer);
@@ -1722,19 +1851,15 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     }
     if (phase === "reduced") return;
     if (phase === "released") {
-      if (pendingNativeHandoff) stopNativeCandidate();
+      settleOrStopNativeOnRelease();
       deactivateScene();
       render();
       return;
     }
     transition("release", reason);
     deactivateScene();
+    settleOrStopNativeOnRelease();
     render();
-    if (pendingNativeHandoff) stopNativeCandidate();
-    // There may be no next scheduler tick after direct navigation. Explicitly
-    // move a visible native candidate to its terminal, paused state so media
-    // cannot continue playing after the hero has been released.
-    syncNativePlayback();
   }
 
   function goToAbout(reason: string): void {
@@ -1935,6 +2060,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       isVisible = entry?.isIntersecting ?? true;
       if (!isVisible) {
         deactivateScene();
+        resetNativeHWatchdog();
         // Intersection lifecycle pauses native playback immediately. The
         // shared scheduler may have no runnable hero tick while offscreen, so
         // waiting for syncNativePlayback() would let the video run ahead of
@@ -2116,6 +2242,14 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         fallback: rendererFallback,
         source: nativeSource,
         assetId: nativeVideo?.dataset.assetId ?? null,
+        nativeHWatchdog: {
+          status: nativeHWatchdogState.status,
+          lastPresentedFrame: nativeHWatchdogState.lastPresentedFrame,
+          lastProgressAtMs: nativeHWatchdogState.lastProgressAtMs,
+          noProgressSinceMs: nativeHWatchdogState.noProgressSinceMs,
+          waiting: nativeHWatchdogState.waiting,
+          stalled: nativeHWatchdogState.stalled,
+        },
       },
       events: events.map((event) => ({ ...event })),
     };

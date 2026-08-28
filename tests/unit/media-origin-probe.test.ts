@@ -53,7 +53,7 @@ function headers(length: number, etag = '"asset-v1"', cacheStatus = "MISS", age 
 }
 
 type FetchCall = { init?: RequestInit; range?: string };
-function fakeOrigin(expected: Uint8Array, options: { wrongBytes?: boolean; driftEtag?: boolean; redirect?: boolean; startupCacheStatus?: string } = {}) {
+function fakeOrigin(expected: Uint8Array, options: { wrongBytes?: boolean; driftEtag?: boolean; redirect?: boolean; startupCacheStatus?: string; omitAcceptRangesOnRanges?: boolean } = {}) {
   const calls: FetchCall[] = [];
   let fullGets = 0;
   const fetchImpl = async (_url: string, init?: RequestInit): Promise<Response> => {
@@ -72,7 +72,9 @@ function fakeOrigin(expected: Uint8Array, options: { wrongBytes?: boolean; drift
     }
     const match = range.match(/^bytes=(\d+)-(\d*)$/) ?? range.match(/^bytes=-(\d+)$/);
     if (range === `bytes=${expected.byteLength}-${expected.byteLength + 1}`) {
-      return new Response("unsatisfied", { status: 416, headers: new Headers({ ...Object.fromEntries(headers(11, etag, "HIT", "1")), "content-range": `bytes */${expected.byteLength}` }) });
+      const invalidHeaders = new Headers({ ...Object.fromEntries(headers(11, etag, "HIT", "1")), "content-range": `bytes */${expected.byteLength}` });
+      if (options.omitAcceptRangesOnRanges) invalidHeaders.delete("accept-ranges");
+      return new Response("unsatisfied", { status: 416, headers: invalidHeaders });
     }
     let start: number;
     let end: number;
@@ -87,6 +89,7 @@ function fakeOrigin(expected: Uint8Array, options: { wrongBytes?: boolean; drift
     const body = expected.slice(start, end + 1);
     const rangeCacheStatus = fullGets > 0 ? "HIT" : (options.startupCacheStatus ?? "MISS");
     const rangeHeaders = headers(body.length, etag, rangeCacheStatus, fullGets > 0 ? "1" : "0");
+    if (options.omitAcceptRangesOnRanges) rangeHeaders.delete("accept-ranges");
     rangeHeaders.set("content-range", `bytes ${start}-${end}/${expected.length}`);
     return new Response(body, { status: 206, headers: rangeHeaders });
   };
@@ -115,6 +118,9 @@ describe("media origin acceptance probe", () => {
   it("requires stable identity, unencoded bytes, and an immutable cache policy", () => {
     const valid = headers(1_024);
     expect(validateCommonHeaders({ status: 206, headers: valid }, 1_024, "video/quicktime", '"asset-v1"', SITE_ORIGIN).cacheControl).toContain("immutable");
+    valid.delete("accept-ranges");
+    expect(validateCommonHeaders({ status: 206, headers: valid }, 1_024, "video/quicktime", '"asset-v1"', SITE_ORIGIN).cacheControl).toContain("immutable");
+    expect(() => validateCommonHeaders({ status: 200, headers: valid }, 1_024, "video/quicktime", '"asset-v1"', SITE_ORIGIN)).toThrow("missing Accept-Ranges: bytes");
     valid.set("content-encoding", "gzip");
     expect(() => validateCommonHeaders({ status: 206, headers: valid }, 1_024, "video/quicktime", '"asset-v1"', SITE_ORIGIN)).toThrow("Content-Encoding must be absent");
   });
@@ -139,6 +145,15 @@ describe("media origin acceptance probe", () => {
     expect(fake.calls.every(({ init }) => init?.redirect === "manual")).toBe(true);
     expect(fake.calls.some(({ range }) => range === "bytes=0-28")).toBe(true);
     expect(fake.calls.some(({ range }) => range === "bytes=25-")).toBe(true);
+  });
+
+  it("accepts Cloudflare-shaped ranges without Accept-Ranges on 206/416", async () => {
+    const expected = fixture();
+    const fake = fakeOrigin(expected, { omitAcceptRangesOnRanges: true });
+    const report = await runMediaOriginProbe({ url: MEDIA_URL, siteOrigin: SITE_ORIGIN, expectedBytes: expected, fetchImpl: fake.fetchImpl });
+    expect(report.failures).toEqual([]);
+    expect(report.results.every((result) => result.startsWith("PASS"))).toBe(true);
+    expect(fake.calls).toHaveLength(10);
   });
 
   it("reports an observed warm startup range without claiming it was cache-cold", async () => {

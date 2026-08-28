@@ -107,6 +107,15 @@ describe("production hero renderer policy", () => {
     })).toMatchObject({ qualified: false, reason: "asset-evidence-mismatch" });
   });
 
+  it("binds production H to the immutable R2 asset identity", () => {
+    expect(HEVC_ALPHA_PRODUCTION_ASSET).toEqual({
+      assetId: "hero-hevc-alpha-hq-v1",
+      sourceUrl: "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov",
+      sha256: "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c",
+    });
+    expect(new URL(HEVC_ALPHA_PRODUCTION_ASSET.sourceUrl).protocol).toBe("https:");
+  });
+
   it("routes every native failure directly to C and has no packed renderer", () => {
     expect(fallbackProductionHeroRenderer("h")).toBe("c");
     expect(fallbackProductionHeroRenderer("a")).toBe("c");

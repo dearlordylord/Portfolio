@@ -19,7 +19,7 @@ export const HEVC_ALPHA_MIME = 'video/quicktime; codecs="hvc1.1.6.L93.B0"';
 /** Immutable runtime identity of the AVFoundation-validated HQ MOV. */
 export const HEVC_ALPHA_PRODUCTION_ASSET = Object.freeze({
   assetId: "hero-hevc-alpha-hq-v1",
-  sourceUrl: "/video-prototype/hero-hevc-alpha-hq.mov",
+  sourceUrl: "https://media.curatorman.com/hero/hero-hevc-alpha-hq-v1-54ef6d61.mov",
   sha256: "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c",
 });
 
@@ -44,11 +44,11 @@ export const HEVC_ALPHA_PRODUCTION_EVIDENCE: HevcProductionEvidence = Object.fre
 
 /**
  * Maximum time a qualified HEVC candidate may prepare its first usable media
- * frame before the page fails open to C. Cloudflare Pages currently answers
- * the staged MOV without verified byte ranges, so the runtime prepares the
- * 11.2 MB file as a Blob behind frame 0. Four seconds bounds input lock and
- * blank-hero risk; range delivery is intentionally deferred as a separate
- * delivery improvement rather than hiding the cost in a longer timeout.
+ * frame before the page fails open to C. H assigns the immutable R2 URL
+ * directly to a DOM video, allowing Safari to request only the ranges needed
+ * for startup and seeking. Four seconds bounds H's preparation portion of the
+ * input lock and blank-hero risk; a failed H can then spend C's separate
+ * three-second readiness window.
  */
 export const HEVC_PREPARATION_DEADLINE_MS = 4_000;
 
