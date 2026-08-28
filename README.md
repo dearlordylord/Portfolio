@@ -27,12 +27,12 @@ Committed encoded asset sizes:
 
 | Asset | Bytes | Shape |
 | --- | ---: | --- |
-| `hero-alpha-vp9.webm` | 2,011,506 | 900×507, 15 fps, 10 s, VP9 with `alpha_mode=1` |
-| `hero-color-matte.mp4` | 1,706,162 | 1,800×508, 15 fps, 10 s, H.264 High; left RGB/right matte |
-| `hq-hero-color-matte.mp4` | 1,553,124 | 2,560×720, 15 fps, 10 s, H.264 High; HQ RGB + matte |
+| `hero-alpha-vp9.webm` | 2,238,324 | 900×507, 15 fps, 10 s, VP9 alpha; 1 s keyframes |
+| `hero-color-matte.mp4` | 1,839,215 | 1,800×508, 15 fps, 10 s, H.264 High; left RGB/right matte; 1 s keyframes |
+| `hq-hero-color-matte.mp4` | 1,796,188 | 2,560×720, 15 fps, 10 s, H.264 High; HQ RGB + matte; 1 s keyframes |
 | Existing WebP sequence | 4,578,812 | 150 × 900×507 RGBA frames |
 
-Regenerate the standard videos with `scripts/generate-video-prototype-assets.sh`. Regenerate the HQ packed candidate with `scripts/generate-hq-packed-video.sh`; it reads `HQ_ARCHIVE` (default `../Portfolio/hero-frames-1280x720-partial.zip`) without copying the archive into this branch, compares CRF 21 (2,195,437 bytes) with CRF 24 (1,553,124 bytes), and selects CRF 24. Both scripts default to the temporary ffmpeg binary used for this prototype; set `FFMPEG` on another machine. `scripts/validate-packed-video.sh` checks the committed packed dimensions and transparent/opaque matte probe points with ffmpeg/ImageMagick. This is an experiment, not production media infrastructure. `canPlayType` cannot prove that a particular iOS release will composite VP9 alpha correctly: A therefore runs a decoded corner-alpha probe and falls back to B/C when its alpha plane is absent, while B probes the post-shader canvas alpha before staying active. The WebGL path still needs a real-device Safari review for color-edge quality, decode power, and autoplay policy.
+Regenerate the standard videos with `scripts/generate-video-prototype-assets.sh`. Regenerate the HQ packed candidate with `scripts/generate-hq-packed-video.sh`; it reads `HQ_ARCHIVE` (default `../Portfolio/hero-frames-1280x720-partial.zip`) without copying the archive into this branch, compares CRF 21 (2,490,241 bytes) with CRF 24 (1,796,188 bytes), and selects CRF 24. All prototype streams use a one-second keyframe interval so cold seeks do not have to decode from frame 0. Both scripts default to the temporary ffmpeg binary used for this prototype; set `FFMPEG` on another machine. `scripts/validate-packed-video.sh` checks the committed packed dimensions and transparent/opaque matte probe points with ffmpeg/ImageMagick. This is an experiment, not production media infrastructure. `canPlayType` cannot prove that a particular iOS release will composite VP9 alpha correctly: A therefore runs a decoded corner-alpha probe and falls back to B/C when its alpha plane is absent, while B probes the post-shader canvas alpha before staying active. The WebGL path still needs a real-device Safari review for color-edge quality, decode power, autoplay policy, and cold seeking.
 
 ## Project work
 

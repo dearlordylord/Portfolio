@@ -50,8 +50,20 @@ check_stream() {
     echo "$source center matte is not opaque" >&2
     return 1
   }
+
+  local keyframe_count
+  keyframe_count="$($FFMPEG -hide_banner -i "$source" -vf showinfo -f null - 2>&1 | grep -c 'iskey:1' || true)"
+  if (( keyframe_count < 10 )); then
+    echo "$source has only $keyframe_count keyframes; cold seeking requires at least one per second" >&2
+    return 1
+  fi
 }
 
 check_stream "public/video-prototype/hero-color-matte.mp4" 900 508
 check_stream "public/video-prototype/hq-hero-color-matte.mp4" 1280 720
+alpha_keyframes="$($FFMPEG -hide_banner -i public/video-prototype/hero-alpha-vp9.webm -vf showinfo -f null - 2>&1 | grep -c 'iskey:1' || true)"
+if (( alpha_keyframes < 10 )); then
+  echo "hero-alpha-vp9.webm has only $alpha_keyframes keyframes; cold seeking requires at least one per second" >&2
+  exit 1
+fi
 echo "packed alpha validation passed"

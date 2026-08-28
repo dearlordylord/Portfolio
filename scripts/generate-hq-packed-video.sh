@@ -48,6 +48,7 @@ for crf in 21 24; do
     -framerate 15 -i "$TMP_DIR/frames/frame_%03d.webp" \
     -filter_complex '[0:v]format=rgba,split=2[colorin][alphain];[colorin]format=rgb24[color];[alphain]alphaextract,format=gray[matte];[color][matte]hstack=inputs=2,format=yuv420p[packed]' \
     -map '[packed]' -an -c:v libx264 -profile:v high -preset medium -crf "$crf" \
+    -g 15 -keyint_min 15 -sc_threshold 0 \
     -movflags +faststart "$TMP_DIR/hq-hero-color-matte-crf${crf}.mp4"
   candidate="$TMP_DIR/hq-hero-color-matte-crf${crf}.mp4"
   candidate_size="$(stat -c '%s' "$candidate")"
