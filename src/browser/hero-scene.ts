@@ -30,6 +30,15 @@ const DEFAULT_IMAGE_SUFFIX = "_delay-0.067s.webp";
 const DEFAULT_NOISE_SOURCE = "Кадры/ШУМ.png";
 const DEFAULT_HERO_BACKGROUND = "#edeef6";
 const MAX_DIAGNOSTIC_EVENTS = 128;
+// Keep the first-screen request burst bounded. Intro frames are intentionally
+// loaded before any later frame; after the semantic intro handoff, later
+// frames are drained in a smaller queue so Safari is not asked to decode all
+// 150 images during first paint.
+const HERO_INTRO_LOAD_CONCURRENCY = 8;
+const HERO_LATER_LOAD_CONCURRENCY = 4;
+// A browser that cannot deliver either load/error (or leaves every image
+// unusable) must not keep the page's native input captive indefinitely.
+const HERO_READINESS_TIMEOUT_MS = 3_000;
 
 type HeroElementId =
   | "scrolly"
@@ -86,6 +95,7 @@ export type HeroSceneSnapshot = {
   autoplay: boolean;
   reducedMotion: boolean;
   exitHoldPending: boolean;
+  readinessWatchdogPending: boolean;
   phaseStartTime: number | null;
   /** Elapsed time in the current timed phase, in milliseconds. */
   phaseElapsedMs: number;
@@ -104,6 +114,10 @@ export type HeroSceneSnapshot = {
     effectiveDpr: number;
   };
   assets: {
+    requested: number;
+    activeRequests: number;
+    introRequestCountAtReady: number | null;
+    laterQueueStarted: boolean;
     loaded: number;
     expected: number;
     introReady: boolean;
@@ -316,6 +330,8 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   let pointerYNormalized = 0.5;
   let ctaAvailable = reducedMotion;
   let exitHoldTimer: TimerHandle | null = null;
+  let readinessTimer: TimerHandle | null = null;
+  let geometrySettleTimer: TimerHandle | null = null;
   let phaseBeforeReducedMotion: HeroPhase | null = null;
   let touchStartY: number | null = null;
   let mobileGeometry: {
@@ -333,6 +349,20 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   };
   const images = new Map<string, HTMLImageElement>();
   const imageSettled = new Set<string>();
+  const imageStarted = new Set<number>();
+  const introFrameIndices = Array.from(
+    { length: HERO_CONTRACT.introEndFrame - HERO_CONTRACT.startFrame + 1 },
+    (_, offset) => HERO_CONTRACT.startFrame + offset,
+  );
+  const laterFrameIndices = Array.from(
+    { length: HERO_CONTRACT.endFrame - HERO_CONTRACT.introEndFrame },
+    (_, offset) => HERO_CONTRACT.introEndFrame + 1 + offset,
+  );
+  let introCursor = 0;
+  let laterCursor = 0;
+  let laterQueueStarted = false;
+  let activeImageLoads = 0;
+  let introRequestCountAtReady: number | null = null;
   const listeners: Array<() => void> = [];
   const events: HeroSceneEvent[] = [];
   const registry = new AssetReadinessRegistry(
@@ -373,6 +403,14 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     phaseStartTime = null;
     recordEvent(event, previous, next, reason);
     if (next === "reduced") {
+      if (readinessTimer !== null) {
+        timerApi.clearTimeout(readinessTimer);
+        readinessTimer = null;
+      }
+      if (geometrySettleTimer !== null) {
+        timerApi.clearTimeout(geometrySettleTimer);
+        geometrySettleTimer = null;
+      }
       if (exitHoldTimer !== null) {
         timerApi.clearTimeout(exitHoldTimer);
         exitHoldTimer = null;
@@ -422,20 +460,33 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     // Size the backing store from the canvas' layout viewport, not innerWidth:
     // desktop scrollbar gutters can otherwise make the bitmap wider than its
     // CSS box and introduce a subtle horizontal squeeze.
+    const measuredWidth = elements.scrolly.getBoundingClientRect().width;
+    const rootWidth = browserDocument.documentElement.clientWidth;
     const width = Math.max(
       1,
-      finiteOr(browserDocument.documentElement.clientWidth || browserWindow.innerWidth, 1),
+      finiteOr(measuredWidth || rootWidth || browserWindow.innerWidth, 1),
+    );
+    const visualHeight = Math.max(
+      1,
+      finiteOr(browserWindow.visualViewport?.height ?? browserWindow.innerHeight, stableHeight ?? 1),
     );
     const mobile = width <= HERO_BREAKPOINT;
     const orientationChanged = lastMobile !== null && lastMobile !== mobile;
+    const innerHeight = Math.max(1, finiteOr(browserWindow.innerHeight, 1));
+    // Mobile Safari can report the collapsed address-bar viewport on the
+    // first pass and a taller layout viewport once its visual viewport settles.
+    // Keep the first-screen contract monotonic within an orientation so the
+    // canvas cannot initialize at a transient quarter-sized stage. A real
+    // orientation transition calls this with `force` and establishes a new
+    // baseline; toolbar collapse/expand never shrinks an already-established
+    // first screen.
+    const observedHeight = mobile ? Math.max(innerHeight, visualHeight) : innerHeight;
     if (force || orientationChanged || stableHeight === null || !mobile) {
-      stableHeight = Math.max(1, finiteOr(browserWindow.innerHeight, 1));
+      stableHeight = observedHeight;
+    } else if (mobile) {
+      stableHeight = Math.max(stableHeight, observedHeight);
     }
     lastMobile = mobile;
-    const visualHeight = Math.max(
-      1,
-      finiteOr(browserWindow.visualViewport?.height ?? browserWindow.innerHeight, stableHeight),
-    );
     const dpr = finiteOr(browserWindow.devicePixelRatio || 1, 1);
     // Geometry is one contract for both modes.  The adapter only translates
     // the result to CSS variables/DOM properties; it does not maintain a
@@ -475,6 +526,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   function beginIntroIfReady(reason: string): void {
     if (disposed || disabled || reducedMotion || phase !== "loading" || !registry.introReady) return;
+    if (!hasRenderableHeroFrame()) {
+      releaseUnavailableHero("intro assets settled without a drawable frame");
+      return;
+    }
+    if (introRequestCountAtReady === null) introRequestCountAtReady = imageStarted.size;
+    clearReadinessTimer();
     addClass(elements.loader, "hidden");
     transition("assets-ready", reason);
     activateScene();
@@ -491,27 +548,56 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   function markImageReady(key: string): void {
     if (disposed || imageSettled.has(key)) return;
     imageSettled.add(key);
+    activeImageLoads = Math.max(0, activeImageLoads - 1);
     registry.markReady(key);
+    resetReadinessWatchdog(key);
     updateLoader();
     recordEvent("asset-ready", "asset", "ready", key);
     beginIntroIfReady("intro assets ready");
     if (reducedMotion) draw(displayFrame);
+    pumpImageQueue();
   }
 
   function markImageFailed(key: string, error: unknown, code = "image-load-failed"): void {
     if (disposed || imageSettled.has(key)) return;
     imageSettled.add(key);
+    activeImageLoads = Math.max(0, activeImageLoads - 1);
     const message = error instanceof Error ? error.message : String(error || "image failed");
     registry.markFailed(key, { code, message });
+    resetReadinessWatchdog(key);
     updateLoader();
     recordEvent("asset-failed", "asset", "failed", `${key}: ${message}`);
     beginIntroIfReady("intro assets ready with named failures");
     if (reducedMotion) draw(displayFrame);
+    pumpImageQueue();
+  }
+
+  function reportDecodeFailure(key: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error || "image decode failed");
+    // `load` plus valid natural dimensions is the readiness boundary. Decode
+    // remains an observability signal only: Safari has exposed a decode()
+    // promise that can stay pending even though drawImage is already valid.
+    recordEvent("asset-decode-failed", "asset", "ready", `${key}: ${message}`);
+  }
+
+  function observeDecode(key: string, image: HTMLImageElement): void {
+    if (typeof image.decode !== "function") return;
+    try {
+      // Attach rejection handling without making readiness wait on this
+      // optional decoder promise. Promise.resolve also handles Safari's
+      // thenable implementations consistently.
+      void Promise.resolve(image.decode()).catch((error: unknown) => {
+        if (!disposed) reportDecodeFailure(key, error);
+      });
+    } catch (error) {
+      if (!disposed) reportDecodeFailure(key, error);
+    }
   }
 
   function loadImage(index: number): void {
     const key = `frame-${padFrame(index)}`;
     let image: HTMLImageElement;
+    activeImageLoads += 1;
     try {
       image = imageFactory();
     } catch (error) {
@@ -520,23 +606,92 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     }
     images.set(key, image);
     image.onload = () => {
-      // Decode is best effort but a decoder rejection must remain visible as a
-      // named registry failure rather than silently painting a broken frame.
-      if (typeof image.decode !== "function") {
+      // A native load event with usable natural dimensions is immediately
+      // drawable. Do not gate the first-screen transition on decode(), whose
+      // promise is optional and can stall indefinitely on Mobile Safari.
+      if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
         markImageReady(key);
-        return;
-      }
-      try {
-        image.decode().then(
-          () => markImageReady(key),
-          (error: unknown) => markImageFailed(key, error, "decode-failed"),
-        );
-      } catch (error) {
-        markImageFailed(key, error, "decode-failed");
+        observeDecode(key, image);
+      } else {
+        markImageFailed(key, new Error("loaded image has no natural dimensions"), "loaded-without-dimensions");
       }
     };
     image.onerror = (error) => markImageFailed(key, error, "network-failed");
     image.src = options.imageSource?.(index) ?? `${DEFAULT_IMAGE_PREFIX}${padFrame(index)}${DEFAULT_IMAGE_SUFFIX}`;
+  }
+
+  function pumpImageQueue(): void {
+    if (disposed || disabled || phase === "released" || phase === "reduced") return;
+    if (!laterQueueStarted && registry.introReady) laterQueueStarted = true;
+    const queue = laterQueueStarted ? laterFrameIndices : introFrameIndices;
+    const concurrency = laterQueueStarted ? HERO_LATER_LOAD_CONCURRENCY : HERO_INTRO_LOAD_CONCURRENCY;
+    let cursor = laterQueueStarted ? laterCursor : introCursor;
+    while (activeImageLoads < concurrency && cursor < queue.length) {
+      const index = queue[cursor];
+      cursor += 1;
+      if (laterQueueStarted) laterCursor = cursor;
+      else introCursor = cursor;
+      if (imageStarted.has(index)) continue;
+      imageStarted.add(index);
+      loadImage(index);
+    }
+  }
+
+  function clearReadinessTimer(): void {
+    if (readinessTimer === null) return;
+    timerApi.clearTimeout(readinessTimer);
+    readinessTimer = null;
+  }
+
+  function isIntroAsset(key: string): boolean {
+    return registry.record(key).phase === "intro";
+  }
+
+  function hasRenderableHeroFrame(): boolean {
+    return registry.expectations.some((expectation) => {
+      if (expectation.frame === undefined || registry.status(expectation.key) !== "ready") return false;
+      const image = images.get(expectation.key);
+      return Boolean(image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0);
+    });
+  }
+
+  function releaseUnavailableHero(reason: string): void {
+    if (disposed || disabled || reducedMotion || phase !== "loading") return;
+    clearReadinessTimer();
+    addClass(elements.loader, "hidden");
+    transition("release", reason);
+    deactivateScene();
+    render();
+  }
+
+  function onReadinessTimeout(): void {
+    readinessTimer = null;
+    if (disposed || disabled || reducedMotion || phase !== "loading") return;
+    // A partial ready set is still useful for a static fallback, but the
+    // hero must not claim the N1 input lock unless intro readiness actually
+    // completed. Releasing here lets native scroll/click input recover.
+    if (registry.introReady && hasRenderableHeroFrame()) {
+      beginIntroIfReady("readiness watchdog observed intro assets");
+    } else {
+      releaseUnavailableHero("hero asset readiness timeout");
+    }
+  }
+
+  function armReadinessWatchdog(): void {
+    if (
+      disposed ||
+      disabled ||
+      reducedMotion ||
+      phase !== "loading" ||
+      readinessTimer !== null
+    ) return;
+    readinessTimer = timerApi.setTimeout(onReadinessTimeout, HERO_READINESS_TIMEOUT_MS);
+  }
+
+  function resetReadinessWatchdog(key: string): void {
+    if (disposed || disabled || reducedMotion || phase !== "loading" || !isIntroAsset(key)) return;
+    clearReadinessTimer();
+    readinessTimer = timerApi.setTimeout(onReadinessTimeout, HERO_READINESS_TIMEOUT_MS);
   }
 
   function drawBackdrop(cw: number, ch: number): void {
@@ -734,6 +889,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   }
 
   function releaseHero(reason: string): void {
+    clearReadinessTimer();
     if (exitHoldTimer !== null) {
       timerApi.clearTimeout(exitHoldTimer);
       exitHoldTimer = null;
@@ -772,6 +928,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     // retroactively release an earlier, already-prevented gesture.
     if (
       mobileGeometry.mobile &&
+      (readinessTimer !== null || (phase !== "loading" && hasRenderableHeroFrame())) &&
       mobileHeroDownwardScrollDisposition({ phase, targetFrame, reducedMotion }) === "consume"
     ) {
       event.preventDefault();
@@ -803,6 +960,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (
       mobileGeometry.mobile &&
       delta > 0 &&
+      (readinessTimer !== null || (phase !== "loading" && hasRenderableHeroFrame())) &&
       mobileHeroDownwardScrollDisposition({ phase, targetFrame, reducedMotion }) === "consume"
     ) {
       event.preventDefault();
@@ -822,16 +980,33 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     if (phase === "ready" || phase === "complete") activateScene();
   }
 
+  function scheduleGeometryResync(): void {
+    if (disposed || geometrySettleTimer !== null) return;
+    // Resize can be delivered before the browser commits its new layout box
+    // (notably during iOS visual-viewport toolbar transitions). One bounded
+    // next-task sample closes that race even where ResizeObserver is absent;
+    // repeated resize events are coalesced into the same sample.
+    geometrySettleTimer = timerApi.setTimeout(() => {
+      geometrySettleTimer = null;
+      if (disposed) return;
+      syncGeometry(false);
+      ensureNoiseLoaded();
+      render();
+    }, 0);
+  }
+
   function onResize(): void {
     syncGeometry(false);
     ensureNoiseLoaded();
     render();
+    scheduleGeometryResync();
   }
 
   function onOrientationChange(): void {
     syncGeometry(true);
     ensureNoiseLoaded();
     render();
+    scheduleGeometryResync();
   }
 
   function onDirectNavigation(): void {
@@ -889,7 +1064,12 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     displayFrame = targetFrame;
     ctaAvailable = false;
     if (registry.introReady) activateScene();
+    // Reduced motion deliberately pauses the progressive image queue. Resume
+    // the same cursors when motion is enabled again so a partially loaded
+    // intro cannot strand the scene in loading until the watchdog fires.
+    pumpImageQueue();
     render();
+    if (phase === "loading") armReadinessWatchdog();
   }
 
   function observeVisibility(): void {
@@ -912,6 +1092,21 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     listeners.push(() => observer.disconnect());
   }
 
+  function observeLayoutResize(): void {
+    const observerConstructor = (
+      browserWindow as Window & { ResizeObserver?: typeof ResizeObserver }
+    ).ResizeObserver ?? (typeof ResizeObserver === "function" ? ResizeObserver : undefined);
+    if (typeof observerConstructor !== "function") return;
+    const observer = new observerConstructor(() => {
+      syncGeometry(false);
+      ensureNoiseLoaded();
+      render();
+    });
+    observer.observe(browserDocument.documentElement);
+    observer.observe(elements.scrolly);
+    listeners.push(() => observer.disconnect());
+  }
+
   function listen<K extends keyof WindowEventMap>(
     target: Window | Document | HTMLElement,
     type: K,
@@ -924,10 +1119,15 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
 
   syncGeometry(true);
   ensureNoiseLoaded();
-  for (let index = 0; index < HERO_CONTRACT.totalFrameCount; index += 1) loadImage(index);
+  pumpImageQueue();
 
   listen(browserWindow, "resize", onResize);
   listen(browserWindow, "orientationchange", onOrientationChange);
+  const visualViewport = browserWindow.visualViewport;
+  if (visualViewport) {
+    visualViewport.addEventListener("resize", onResize);
+    listeners.push(() => visualViewport.removeEventListener("resize", onResize));
+  }
   listen(browserWindow, "mousemove", onMouseMove);
   listen(browserWindow, "wheel", onWheel, { passive: false });
   listen(browserWindow, "touchstart", onTouchStart, { passive: true });
@@ -940,6 +1140,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
   elements.exploreCTA.addEventListener("click", onDirectNavigation);
   listeners.push(() => elements.exploreCTA.removeEventListener("click", onDirectNavigation));
   observeVisibility();
+  observeLayoutResize();
 
   if (options.onReducedMotionChange) {
     listeners.push(options.onReducedMotionChange(onReducedMotionChange));
@@ -964,6 +1165,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     render();
   } else {
     beginIntroIfReady("assets already ready");
+    armReadinessWatchdog();
   }
 
   function snapshot(): HeroSceneSnapshot {
@@ -989,6 +1191,7 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
       autoplay: !reducedMotion && (phase === "intro" || phase === "playing"),
       reducedMotion,
       exitHoldPending: exitHoldTimer !== null,
+      readinessWatchdogPending: readinessTimer !== null,
       phaseStartTime,
       phaseElapsedMs,
       playbackCompleted,
@@ -1005,6 +1208,10 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
         effectiveDpr: mobileGeometry.effectiveDpr,
       },
       assets: {
+        requested: imageStarted.size,
+        activeRequests: activeImageLoads,
+        introRequestCountAtReady,
+        laterQueueStarted,
         loaded: readiness.ready + readiness.failed,
         expected: readiness.expected,
         introReady: readiness.introReady,
@@ -1048,6 +1255,14 @@ export function mountHeroScene(options: HeroSceneOptions): HeroSceneHandle {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      if (readinessTimer !== null) {
+        timerApi.clearTimeout(readinessTimer);
+        readinessTimer = null;
+      }
+      if (geometrySettleTimer !== null) {
+        timerApi.clearTimeout(geometrySettleTimer);
+        geometrySettleTimer = null;
+      }
       if (exitHoldTimer !== null) {
         timerApi.clearTimeout(exitHoldTimer);
         exitHoldTimer = null;

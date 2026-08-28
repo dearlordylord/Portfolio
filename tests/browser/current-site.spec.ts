@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 type DiagnosticsSnapshot = {
@@ -16,13 +16,19 @@ type DiagnosticsSnapshot = {
       autoplay: boolean;
       reducedMotion: boolean;
       exitHoldPending: boolean;
+      readinessWatchdogPending: boolean;
       playbackCompleted: boolean;
       displayFrame: number;
       targetFrame: number;
       assets: {
+        requested: number;
+        activeRequests: number;
+        introRequestCountAtReady: number | null;
+        laterQueueStarted: boolean;
         introReady: boolean;
         allReady: boolean;
         loaded: number;
+        pending: number;
         expected: number;
         degraded: boolean;
         fallbackCount: number;
@@ -43,7 +49,19 @@ type DiagnosticsSnapshot = {
         ctaOpacity: number;
         ctaPointerEvents: string;
       };
-      canvas: { cssWidth: number; cssHeight: number; backingWidth: number; backingHeight: number };
+      canvas: {
+        cssWidth: number;
+        cssHeight: number;
+        backingWidth: number;
+        backingHeight: number;
+        renderedAsset: {
+          key: string;
+          source: string;
+          destination: { x: number; y: number; width: number; height: number };
+          naturalWidth: number;
+          naturalHeight: number;
+        } | null;
+      };
     };
     particles: {
       active: boolean;
@@ -302,6 +320,398 @@ test("hero ready state is deterministic and inspectable", async ({ page }, testI
   });
   writeBaseline(testInfo.project.name, "hero-ready-state.json", stateJson);
   writeBaseline(testInfo.project.name, "hero-ready.png", screenshot);
+});
+
+test("mobile hero fails open when Safari-like image decode stalls", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Safari-like decode fallback is covered by the mobile project");
+  test.slow();
+  await prepareLocalPage(page);
+  // Safari can expose decode() while leaving its promise pending for a
+  // resource that onload has already delivered. Model that browser boundary
+  // without replacing native image loading or the production scheduler.
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      configurable: true,
+      value: () => new Promise<void>(() => {}),
+    });
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.phase, { timeout: 20_000 })
+    .not.toBe("loading");
+  await page.clock.runFor(1_600);
+
+  const readGeometry = async () => {
+    const state = await snapshot(page);
+    const canvas = state.scenes.hero.canvas;
+    const asset = canvas.renderedAsset;
+    expect(asset, "a loaded frame must be rendered after the ready handoff").not.toBeNull();
+    if (!asset) throw new Error("rendered asset missing");
+    return {
+      state,
+      scale: asset.destination.height / asset.naturalHeight,
+      xOffset: asset.destination.x - canvas.cssWidth / 2,
+      y: asset.destination.y,
+    };
+  };
+
+  const current = await readGeometry();
+  expect(current.state.scenes.hero.assets.introReady).toBe(true);
+  await expect(page.locator("#scrolly-loader")).toHaveClass(/hidden/);
+  expect(await canvasHasPaint(page, "#scrolly-canvas")).toBe(true);
+
+  // A Safari-like delayed decoder must not alter the CSS-pixel destination or
+  // the DPR-scaled backing store when the visual viewport settles/reflows.
+  const expectedDpr = Math.min(current.state.viewport.dpr, 2);
+  for (const viewport of [
+    { width: 360, height: 700 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect
+      .poll(async () => {
+        const state = await snapshot(page);
+        const canvas = state.scenes.hero.canvas;
+        const expectedDpr = Math.min(state.viewport.dpr, 2);
+        return (
+          canvas.cssWidth === viewport.width &&
+          canvas.backingWidth === Math.round(canvas.cssWidth * expectedDpr) &&
+          canvas.backingHeight === Math.round(canvas.cssHeight * expectedDpr)
+        );
+      }, { timeout: 5_000 })
+      .toBe(true);
+    await page.clock.runFor(16);
+    const settled = await readGeometry();
+    const hero = settled.state.scenes.hero;
+    expect(hero.phase).not.toBe("loading");
+    expect(hero.canvas.cssHeight).toBeCloseTo(current.state.scenes.hero.canvas.cssHeight, 1);
+    expect(hero.canvas.backingWidth).toBe(Math.round(hero.canvas.cssWidth * expectedDpr));
+    expect(hero.canvas.backingHeight).toBe(Math.round(hero.canvas.cssHeight * expectedDpr));
+    expect(settled.scale).toBeCloseTo(current.scale, 6);
+    expect(settled.xOffset).toBeCloseTo(current.xOffset, 6);
+    expect(settled.y).toBeCloseTo(current.y, 6);
+  }
+});
+
+test("mobile hero converges after a transient short viewport", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Viewport-settle coverage belongs to mobile projects");
+  test.slow();
+  await prepareLocalPage(page);
+  await installPausedClock(page);
+  // Model Mobile Safari's first layout pass while browser chrome is expanded.
+  // The later resize is the settled visual/layout viewport that must become
+  // the stable first-screen height for the remainder of this orientation.
+  await page.setViewportSize({ width: 390, height: 400 });
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1_600);
+  const short = await snapshot(page);
+  expect(short.scenes.hero.geometry.stableHeight).toBe(400);
+  expect(short.scenes.hero.canvas.renderedAsset).not.toBeNull();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.geometry.stableHeight, { timeout: 5_000 })
+    .toBe(844);
+  await page.clock.runFor(16);
+  const settled = await snapshot(page);
+  const settledAsset = settled.scenes.hero.canvas.renderedAsset;
+  expect(settledAsset).not.toBeNull();
+  expect(settled.scenes.hero.canvas.cssHeight).toBeGreaterThan(short.scenes.hero.canvas.cssHeight);
+  expect(settledAsset!.destination.height).toBeGreaterThan(short.scenes.hero.canvas.renderedAsset!.destination.height);
+  expect(settled.scenes.hero.canvas.backingWidth).toBe(
+    Math.round(settled.scenes.hero.canvas.cssWidth * Math.min(settled.viewport.dpr, 2)),
+  );
+  expect(settled.scenes.hero.canvas.backingHeight).toBe(
+    Math.round(settled.scenes.hero.canvas.cssHeight * Math.min(settled.viewport.dpr, 2)),
+  );
+
+  // A second initialization at the settled viewport must produce the same
+  // CSS-pixel destination and effective-DPR transform, not a quarter-sized
+  // first frame caused by an early backing-store race.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  await page.clock.runFor(1_600);
+  const reloaded = await snapshot(page);
+  const reloadedAsset = reloaded.scenes.hero.canvas.renderedAsset;
+  expect(reloadedAsset).not.toBeNull();
+  expect(reloaded.scenes.hero.geometry.stableHeight).toBe(844);
+  expect(reloaded.scenes.hero.canvas.cssHeight).toBeCloseTo(settled.scenes.hero.canvas.cssHeight, 5);
+  expect(reloadedAsset!.destination.width / reloadedAsset!.naturalWidth).toBeCloseTo(
+    settledAsset!.destination.width / settledAsset!.naturalWidth,
+    6,
+  );
+  expect(reloadedAsset!.destination.height / reloadedAsset!.naturalHeight).toBeCloseTo(
+    settledAsset!.destination.height / settledAsset!.naturalHeight,
+    6,
+  );
+  expect(reloaded.scenes.hero.canvas.backingWidth).toBe(
+    Math.round(reloaded.scenes.hero.canvas.cssWidth * Math.min(reloaded.viewport.dpr, 2)),
+  );
+  expect(reloaded.scenes.hero.canvas.backingHeight).toBe(
+    Math.round(reloaded.scenes.hero.canvas.cssHeight * Math.min(reloaded.viewport.dpr, 2)),
+  );
+});
+
+test("mobile hero prioritizes intro requests before bounded later loading", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Progressive hero loading is covered by the mobile project");
+  test.slow();
+  await prepareLocalPage(page);
+  const requestedFrames: number[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const frameFixture = readFileSync(path.join(process.cwd(), "Кадры/frame_000_delay-0.067s.webp"));
+  await page.route("**/frame_*.webp", async (route) => {
+    const match = /frame_(\d+)_/.exec(new URL(route.request().url()).pathname);
+    if (match) requestedFrames.push(Number(match[1]));
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try {
+      // Keep each batch observable long enough to inspect the queue boundary.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Fulfill from a local immutable fixture rather than retaining a
+      // Playwright APIResponse across the artificial delay. This keeps the
+      // queue test independent of response-object disposal.
+      await route.fulfill({
+        status: 200,
+        contentType: "image/webp",
+        body: frameFixture,
+      });
+    } finally {
+      inFlight -= 1;
+    }
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.requested, { timeout: 5_000 })
+    .toBeGreaterThan(0);
+  const initial = await snapshot(page);
+  expect(initial.scenes.hero.assets.laterQueueStarted).toBe(false);
+  // The queue may have advanced through several bounded batches while the
+  // polling round-trip completes, but it cannot request any later frame yet.
+  expect(initial.scenes.hero.assets.requested).toBeLessThanOrEqual(32);
+  expect(maxInFlight).toBeLessThanOrEqual(8);
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introRequestCountAtReady, { timeout: 20_000 })
+    .toBe(32);
+  const ready = await snapshot(page);
+  expect(ready.scenes.hero.assets.laterQueueStarted).toBe(true);
+  expect(ready.scenes.hero.assets.requested).toBeGreaterThanOrEqual(36);
+  expect(requestedFrames.slice(0, 32).every((frame) => frame <= 31)).toBe(true);
+  expect(requestedFrames.slice(32, 36).every((frame) => frame >= 32)).toBe(true);
+});
+
+test("mobile hero bounds the input lock while a partial intro remains loading", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Partial-intro input coverage belongs to mobile projects");
+  test.slow();
+  await prepareLocalPage(page);
+  const pendingFrame = { release: null as (() => void) | null };
+  await page.route("**/frame_*.webp", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.includes("frame_001_")) {
+      await new Promise<void>((resolve) => {
+        pendingFrame.release = resolve;
+      });
+      await route.continue();
+      return;
+    }
+    if (pathname.includes("frame_000_")) {
+      await route.continue();
+      return;
+    }
+    await route.abort();
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.loaded, { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(31);
+  const partial = await snapshot(page);
+  expect(partial.scenes.hero.phase).toBe("loading");
+  expect(partial.scenes.hero.assets.introReady).toBe(false);
+  expect(partial.scenes.hero.assets.pending).toBeGreaterThan(0);
+  await expect(page.locator("#scrolly-loader")).not.toHaveClass(/hidden/);
+
+  const partialWheelPrevented = await page.evaluate(() => {
+    let observed = false;
+    window.addEventListener("wheel", (event) => {
+      observed = event.defaultPrevented;
+    }, { once: true });
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, cancelable: true }));
+    return observed;
+  });
+  // N1 still owns the first-screen gesture while the bounded readiness
+  // watchdog is active, even though this partial state has not painted yet.
+  expect(partialWheelPrevented).toBe(true);
+
+  await page.clock.runFor(3_001);
+  const released = await snapshot(page);
+  expect(released.scenes.hero.phase).toBe("released");
+  await expect(page.locator("#scrolly-loader")).toHaveClass(/hidden/);
+  pendingFrame.release?.();
+  const releasedWheelPrevented = await page.evaluate(() => {
+    let observed = false;
+    window.addEventListener("wheel", (event) => {
+      observed = event.defaultPrevented;
+    }, { once: true });
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, cancelable: true }));
+    return observed;
+  });
+  expect(releasedWheelPrevented).toBe(false);
+});
+
+test("direct navigation clears the mobile readiness watchdog", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Readiness lifecycle coverage belongs to mobile projects");
+  test.slow();
+  await prepareLocalPage(page);
+  const pendingFrame = { release: null as (() => void) | null };
+  await page.route("**/frame_*.webp", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.includes("frame_001_")) {
+      await new Promise<void>((resolve) => {
+        pendingFrame.release = resolve;
+      });
+      await route.continue();
+      return;
+    }
+    if (pathname.includes("frame_000_")) {
+      await route.continue();
+      return;
+    }
+    await route.abort();
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.loaded, { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(31);
+  const loading = await snapshot(page);
+  expect(loading.scenes.hero.phase).toBe("loading");
+  expect(loading.scenes.hero.readinessWatchdogPending).toBe(true);
+
+  await page.evaluate(() =>
+    document.querySelector<HTMLAnchorElement>('nav a[href="#projects"]')?.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    ),
+  );
+  const released = await snapshot(page);
+  expect(released.scenes.hero.phase).toBe("released");
+  expect(released.scenes.hero.readinessWatchdogPending).toBe(false);
+  pendingFrame.release?.();
+  await page.clock.runFor(3_001);
+  const afterDeadline = await snapshot(page);
+  expect(afterDeadline.scenes.hero.phase).toBe("released");
+  expect(afterDeadline.scenes.hero.readinessWatchdogPending).toBe(false);
+});
+
+test("mobile hero resumes its asset queue after reduced-motion interruption", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Reduced-motion queue coverage belongs to mobile projects");
+  test.slow();
+  await prepareLocalPage(page);
+  const frameFixture = readFileSync(path.join(process.cwd(), "Кадры/frame_000_delay-0.067s.webp"));
+  await page.route("**/frame_*.webp", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await route.fulfill({ status: 200, contentType: "image/webp", body: frameFixture });
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.activeRequests, { timeout: 5_000 })
+    .toBe(8);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(async () => (await snapshot(page)).scenes.hero.reducedMotion).toBe(true);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.activeRequests, { timeout: 5_000 })
+    .toBe(0);
+  const paused = await snapshot(page);
+  expect(paused.scenes.hero.phase).toBe("reduced");
+  expect(paused.scenes.hero.assets.introReady).toBe(false);
+  const requestsBeforeResume = paused.scenes.hero.assets.requested;
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect.poll(async () => (await snapshot(page)).scenes.hero.reducedMotion).toBe(false);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.requested, { timeout: 5_000 })
+    .toBeGreaterThan(requestsBeforeResume);
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 20_000 })
+    .toBe(true);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("intro");
+});
+
+test("mobile hero treats readiness timeout as an inactivity watchdog", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Readiness watchdog coverage belongs to mobile projects");
+  test.slow();
+  await prepareLocalPage(page);
+  const frameFixture = readFileSync(path.join(process.cwd(), "Кадры/frame_000_delay-0.067s.webp"));
+  const pendingFrames: Array<{ release: () => void }> = [];
+  await page.route("**/frame_*.webp", async (route) => {
+    const match = /frame_(\d+)_/.exec(new URL(route.request().url()).pathname);
+    const frame = match ? Number(match[1]) : Number.NaN;
+    if (frame > 31) {
+      await route.abort();
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      pendingFrames.push({ release: resolve });
+    });
+    await route.fulfill({ status: 200, contentType: "image/webp", body: frameFixture });
+  });
+  await installPausedClock(page);
+  await page.goto("/?motionDiagnostics=1&motionDisable=particles,contact", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.activeRequests, { timeout: 5_000 })
+    .toBe(8);
+
+  // Each settlement arrives before the three-second inactivity deadline. The
+  // old one-shot timer released at virtual t=3000ms; the corrected watchdog
+  // resets at every settlement and therefore remains loading through all
+  // these intervals until the final intro frame arrives.
+  for (let settled = 1; settled <= 31; settled += 1) {
+    await page.clock.runFor(2_500);
+    await expect.poll(() => pendingFrames.length, { timeout: 5_000 }).toBeGreaterThan(0);
+    const pending = pendingFrames.shift();
+    if (!pending) throw new Error("expected a pending intro response");
+    pending.release();
+    await expect
+      .poll(async () => (await snapshot(page)).scenes.hero.assets.loaded, { timeout: 5_000 })
+      .toBe(settled);
+    expect((await snapshot(page)).scenes.hero.phase).toBe("loading");
+  }
+
+  await page.clock.runFor(2_500);
+  await expect.poll(() => pendingFrames.length, { timeout: 5_000 }).toBeGreaterThan(0);
+  const finalPending = pendingFrames.shift();
+  if (!finalPending) throw new Error("expected the final intro response");
+  finalPending.release();
+  await expect
+    .poll(async () => (await snapshot(page)).scenes.hero.assets.introReady, { timeout: 5_000 })
+    .toBe(true);
+  expect((await snapshot(page)).scenes.hero.phase).toBe("intro");
 });
 
 test("production runtime assets are served without hero degradation", async ({ page }, testInfo) => {
