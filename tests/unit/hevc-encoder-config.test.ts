@@ -93,6 +93,10 @@ describe("HEVC-alpha staging manifest validation", () => {
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({
       ...validManifest,
+      output: { ...validManifest.output, decodedAlphaMaximum: 0 },
+    })).toMatchObject({ valid: false });
+    expect(validateHevcEncoderManifest({
+      ...validManifest,
       encode: { ...validManifest.encode, averageBitRate: 0 },
     })).toMatchObject({ valid: false });
     expect(validateHevcEncoderManifest({

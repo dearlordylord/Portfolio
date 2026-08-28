@@ -202,6 +202,11 @@ private struct AlphaRange {
         minimum = Swift.min(minimum, value)
         maximum = Swift.max(maximum, value)
     }
+
+    mutating func merge(_ other: AlphaRange) {
+        minimum = Swift.min(minimum, other.minimum)
+        maximum = Swift.max(maximum, other.maximum)
+    }
 }
 
 private struct PixelBufferFrame {
@@ -609,7 +614,7 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
         throw EncoderError.validation("duration is \(duration)s; expected \(expectedDuration)s")
     }
 
-    let descriptions = track.formatDescriptions.compactMap { $0 as? CMFormatDescription }
+    let descriptions = track.formatDescriptions
     let codecTypes = descriptions.map(CMFormatDescriptionGetMediaSubType)
     let hasHEVCCodec = codecTypes.contains {
         $0 == kCMVideoCodecType_HEVC || $0 == kCMVideoCodecType_HEVCWithAlpha
@@ -648,7 +653,7 @@ private func validateOutput(at url: URL) throws -> OutputValidation {
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             throw EncoderError.validation("decoded sample \(sampleCount) has no image buffer")
         }
-        decodedAlpha.include(try decodedAlphaRange(from: imageBuffer))
+        decodedAlpha.merge(try decodedAlphaRange(from: imageBuffer))
         sampleCount += 1
         if sampleCount > sourceFrameCount {
             throw EncoderError.validation("sample count exceeds \(sourceFrameCount)")
