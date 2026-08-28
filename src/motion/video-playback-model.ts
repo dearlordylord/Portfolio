@@ -39,10 +39,19 @@ export type VideoPlaybackSnapshot = {
   mediaFrame: number | null;
   confirmedPresentedFrame: number | null;
   confirmationSource: string | null;
+  /** Latest requested scrub target; never replaced by stale lifecycle values. */
+  seekTargetFrame: number | null;
+  /** The requested target was observed as presented, independently of play. */
+  targetConfirmedFrame: number | null;
+  /** First later presented frame after target confirmation, proving motion. */
+  postSeekProgressFrame: number | null;
+  /** Presentation evidence did not reach the target before the observation deadline. */
+  targetConfirmationTimedOut: boolean;
   deltaFrames: number | null;
   expectedMotion: boolean;
   actualPlayback: ActualPlayback;
   reason: string;
+  resumeRequested: boolean;
   lastProgressAtMs: number | null;
   lastProgressAgeMs: number | null;
   scrubHeldFrame: number | null;
@@ -72,16 +81,19 @@ export type VideoPlaybackModelOptions = {
 export function shouldAutoplayHandoff(snapshot: VideoPlaybackSnapshot): boolean {
   const hasMediaReady = snapshot.eventTape.some((entry) => entry.event === "media-ready");
   if (!hasMediaReady) return true;
-  return snapshot.expectedMotion
-    && snapshot.actualPlayback === "playing"
-    && !snapshot.seeking
-    && snapshot.reason !== "user-pause"
-    && snapshot.reason !== "stalled-after-seek";
+  if (!snapshot.expectedMotion || snapshot.reason === "user-pause" || snapshot.reason === "stalled-after-seek") return false;
+  // During a release handoff the media element may not have emitted
+  // `playing` yet. Preserve the request so the new renderer calls play once,
+  // while never treating an ordinary paused seek as autoplay intent.
+  return snapshot.actualPlayback === "playing" || snapshot.resumeRequested;
 }
 
 /** Keep the last known frame when a renderer changes, including a paused one. */
 export function playbackHandoffFrame(snapshot: VideoPlaybackSnapshot): number {
-  return snapshot.scrubHeldFrame ?? snapshot.confirmedPresentedFrame ?? snapshot.intendedFrame;
+  return snapshot.scrubHeldFrame
+    ?? snapshot.seekTargetFrame
+    ?? snapshot.confirmedPresentedFrame
+    ?? snapshot.intendedFrame;
 }
 
 function finiteOr(value: number | undefined, fallback: number): number {
@@ -125,9 +137,14 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
   let mediaFrame: number | null = null;
   let confirmedPresentedFrame: number | null = null;
   let confirmationSource: string | null = null;
+  let seekTargetFrame: number | null = null;
+  let targetConfirmedFrame: number | null = null;
+  let postSeekProgressFrame: number | null = null;
+  let targetConfirmationTimedOut = false;
   let expectedMotion = false;
   let actualPlayback: ActualPlayback = "paused";
   let reason = "mount";
+  let resumeRequested = false;
   let lastProgressAtMs: number | null = null;
   let scrubHeldFrame: number | null = null;
   let seeking = false;
@@ -150,9 +167,10 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
   const snapshot = (atMs = lastProgressAtMs ?? 0): VideoPlaybackSnapshot => {
     if (seeking && seekDeadlineAtMs !== null && atMs >= seekDeadlineAtMs && !userPaused) {
       seeking = false;
-      actualPlayback = "paused";
-      expectedMotion = true;
-      reason = "stalled-after-seek";
+      // A missed presentation observation cannot overwrite media facts. The
+      // element may be playing even when rVFC never reports the exact target.
+      targetConfirmationTimedOut = true;
+      reason = "target-confirmation-timeout";
       appendTape(
         { type: "media-timeupdate", atMs, currentTimeSeconds: mediaCurrentTimeSeconds ?? 0 },
         { synthetic: true, reason },
@@ -168,10 +186,22 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       mediaFrame,
       confirmedPresentedFrame,
       confirmationSource,
-      deltaFrames: confirmedPresentedFrame === null ? null : confirmedPresentedFrame - intendedFrame,
+      seekTargetFrame,
+      targetConfirmedFrame,
+      postSeekProgressFrame,
+      targetConfirmationTimedOut,
+      // This is seek error, not ordinary playback distance. Once the target
+      // has been observed, keep the error anchored to that observation rather
+      // than letting it grow as playback advances normally.
+      deltaFrames: seekTargetFrame === null
+        ? null
+        : (targetConfirmedFrame ?? (seeking ? confirmedPresentedFrame : null)) === null
+          ? null
+          : (targetConfirmedFrame ?? confirmedPresentedFrame ?? seekTargetFrame) - seekTargetFrame,
       expectedMotion,
       actualPlayback,
       reason,
+      resumeRequested,
       lastProgressAtMs,
       lastProgressAgeMs,
       scrubHeldFrame,
@@ -193,6 +223,11 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
         scrubHeldFrame = null;
         seekDeadlineAtMs = null;
         confirmationSource = null;
+        seekTargetFrame = null;
+        targetConfirmedFrame = null;
+        postSeekProgressFrame = null;
+        targetConfirmationTimedOut = false;
+        resumeRequested = false;
         reason = "autoplay-t0";
         lastProgressAtMs = event.atMs;
         appendTape(event, { currentTimeSeconds: mediaCurrentTimeSeconds, intendedFrame: 0, autoplay: true });
@@ -206,27 +241,36 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       case "media-presented": {
         const presentedFrame = clampFrame(event.frame, frameCount);
         setMediaTime(event.currentTimeSeconds);
-        if (!userPaused) {
-          confirmedPresentedFrame = presentedFrame;
-          confirmationSource = event.source ?? "event";
-          lastProgressAtMs = event.atMs;
-          if (seeking && scrubHeldFrame === presentedFrame) {
-            seeking = false;
-            scrubHeldFrame = null;
-            seekDeadlineAtMs = null;
-            expectedMotion = true;
-            actualPlayback = "playing";
-            reason = "scrub-confirmed-autoplay";
-          } else if (expectedMotion) {
-            actualPlayback = "playing";
-            reason = "presented-progress";
+        // Presentation is an observation, not the resume trigger. The
+        // adapter requests play on pointerup/change and may receive
+        // `media-playing` before this callback arrives.
+        confirmedPresentedFrame = presentedFrame;
+        confirmationSource = event.source ?? "event";
+        lastProgressAtMs = event.atMs;
+        if (
+          seekTargetFrame !== null
+          && targetConfirmedFrame === null
+          && presentedFrame >= seekTargetFrame
+        ) {
+          targetConfirmedFrame = presentedFrame;
+          seeking = false;
+          seekDeadlineAtMs = null;
+          targetConfirmationTimedOut = false;
+          if (presentedFrame > seekTargetFrame && expectedMotion && actualPlayback === "playing") {
+            postSeekProgressFrame = presentedFrame;
           }
+          if (!userPaused && actualPlayback === "playing") reason = "presented-target";
+        } else if (targetConfirmedFrame !== null && presentedFrame !== targetConfirmedFrame && expectedMotion && actualPlayback === "playing") {
+          postSeekProgressFrame = presentedFrame;
+          reason = "presented-progress";
         }
         appendTape(event, {
           frame: presentedFrame,
           currentTimeSeconds: mediaCurrentTimeSeconds,
           source: event.source ?? null,
-          confirmed: !userPaused,
+          confirmed: true,
+          targetConfirmed: targetConfirmedFrame === presentedFrame,
+          postSeekProgress: postSeekProgressFrame === presentedFrame,
           intendedFrame,
         });
         break;
@@ -235,6 +279,11 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
         const target = clampFrame(event.frame, frameCount);
         intendedFrame = target;
         scrubHeldFrame = target;
+        seekTargetFrame = target;
+        targetConfirmedFrame = null;
+        postSeekProgressFrame = null;
+        targetConfirmationTimedOut = false;
+        resumeRequested = false;
         seeking = true;
         seekDeadlineAtMs = event.atMs + resumeDeadlineMs;
         if (!userPaused) expectedMotion = true;
@@ -245,13 +294,20 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       }
       case "scrub-pointerup":
       case "scrub-change": {
-        // Pointer lifecycle events are acknowledgements only. The last input
-        // event is the source of truth; stale frame=0 values are recorded but
-        // cannot mutate the intended target.
+        // The latest input event is the source of truth; stale frame=0 values
+        // are recorded but cannot mutate the intended target. Release is an
+        // immediate play request; target presentation remains observational.
+        if (seekTargetFrame !== null && !userPaused && actualPlayback !== "playing") {
+          resumeRequested = true;
+          reason = "resume-requested";
+        }
+        scrubHeldFrame = null;
         appendTape(event, {
           ignoredFrame: event.frame ?? null,
           intendedFrame,
           scrubHeldFrame,
+          seekTargetFrame,
+          resumeRequested,
         });
         break;
       }
@@ -260,6 +316,7 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
         expectedMotion = false;
         actualPlayback = "paused";
         seeking = false;
+        resumeRequested = false;
         reason = "user-pause";
         seekDeadlineAtMs = null;
         appendTape(event, { intendedFrame, userPaused: true });
@@ -268,10 +325,11 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       case "user-play": {
         userPaused = false;
         expectedMotion = true;
-        actualPlayback = "playing";
+        actualPlayback = "paused";
         seeking = false;
         scrubHeldFrame = null;
         seekDeadlineAtMs = null;
+        resumeRequested = true;
         reason = "user-play";
         appendTape(event, { intendedFrame, resumed: true });
         break;
@@ -280,7 +338,8 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
         if (!userPaused) {
           actualPlayback = "playing";
           expectedMotion = true;
-          if (reason !== "autoplay-t0" && reason !== "scrub-confirmed-autoplay") reason = "media-playing";
+          resumeRequested = false;
+          if (reason !== "autoplay-t0") reason = "media-playing";
         }
         appendTape(event, { actualPlayback, expectedMotion, userPaused });
         break;
@@ -288,6 +347,7 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       case "media-paused": {
         actualPlayback = "paused";
         const mediaReason = event.reason ?? "media-paused";
+        resumeRequested = false;
         if (mediaReason === "user-pause") {
           userPaused = true;
           expectedMotion = false;
@@ -304,9 +364,18 @@ export function createVideoPlaybackModel(options: VideoPlaybackModelOptions): Vi
       case "renderer-fallback": {
         renderer = event.to;
         reason = `fallback-${event.from}-to-${event.to}`;
-        expectedMotion = expectedMotion || !userPaused;
-        actualPlayback = seeking || userPaused ? "paused" : actualPlayback;
-        appendTape(event, { from: event.from, to: event.to, intendedFrame, expectedMotion });
+        // Preserve actual state and motion intent across a renderer handoff.
+        // A fresh unsupported renderer has no media-ready event and is
+        // allowed to autoplay; a user pause or timed-out seek is not.
+        appendTape(event, {
+          from: event.from,
+          to: event.to,
+          intendedFrame,
+          seekTargetFrame,
+          expectedMotion,
+          actualPlayback,
+          resumeRequested,
+        });
         break;
       }
     }

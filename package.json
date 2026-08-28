@@ -7,6 +7,7 @@
     "serve": "vite --host 127.0.0.1 --port 4173",
     "prototype:serve": "vite --host 127.0.0.1 --port 4173",
     "prototype:assets:hq": "bash scripts/generate-hq-packed-video.sh",
+    "prototype:validate:packed": "bash scripts/validate-packed-video.sh",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "typecheck": "tsc --noEmit",

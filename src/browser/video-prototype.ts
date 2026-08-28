@@ -19,6 +19,8 @@ import {
   type VideoPlaybackModel,
   type VideoPlaybackSnapshot,
 } from "../motion/video-playback-model";
+import { hasTransparentProbePixel } from "../motion/packed-alpha";
+import { nextExactSequenceFrame } from "../motion/sequence-playback";
 
 type Variant = PlaybackRenderer;
 
@@ -38,6 +40,11 @@ const VARIANTS: readonly VariantDefinition[] = [
 const FRAME_COUNT = 150;
 const FRAME_RATE = 15;
 const FRAME_DURATION_SECONDS = FRAME_COUNT / FRAME_RATE;
+// Mobile decoders can take longer than one half-second to present a random
+// seek (the first Chromium probe took ~1.1s). Keep the watchdog observable,
+// but do not misclassify a slow seek as a deadlock while play is already
+// requested.
+const RESUME_DEADLINE_MS = 2000;
 const INTRO_END_FRAME = 31;
 const LAST_FRAME = FRAME_COUNT - 1;
 const LAST_FRAME_PTS_SECONDS = LAST_FRAME / FRAME_RATE;
@@ -117,10 +124,14 @@ const metricElements = {
   mediaFrame: document.getElementById("metric-media-frame"),
   presented: document.getElementById("metric-presented"),
   confirmation: document.getElementById("metric-confirmation"),
+  targetConfirmed: document.getElementById("metric-target-confirmed"),
+  postSeekProgress: document.getElementById("metric-post-seek-progress"),
+  targetTimeout: document.getElementById("metric-target-timeout"),
   delta: document.getElementById("metric-delta"),
   expected: document.getElementById("metric-expected"),
   actual: document.getElementById("metric-actual"),
   reason: document.getElementById("metric-reason"),
+  resumeRequested: document.getElementById("metric-resume-requested"),
   progressAge: document.getElementById("metric-progress-age"),
 } as const;
 
@@ -158,7 +169,7 @@ type Runtime = {
   togglePlayback: () => void;
   pauseForScrub: () => void;
   resumeFromScrub: (frame: number) => void;
-  resumeAfterPresented: (frame: number) => void;
+  resumeAfterScrubRelease: (frame: number) => void;
   seek: (frame: number) => void;
 };
 
@@ -177,6 +188,7 @@ let requestedVariant: Variant = "a";
 let scrubHeldFrame: number | null = null;
 let scrubPointerActive = false;
 let scrubCompletedFrameAwaitingChange: number | null = null;
+let scrubResumeIssued = false;
 let playbackBinding: PlaybackBinding | null = null;
 
 // A paused seek may produce no further media event. Keep the diagnostic model
@@ -292,7 +304,9 @@ function syncPlaybackSnapshot(snapshot: VideoPlaybackSnapshot): void {
   scrubHeldFrame = snapshot.scrubHeldFrame;
   metrics.scrubHeldFrame = snapshot.scrubHeldFrame;
   if (snapshot.seeking) metrics.scrubState = `seeking · target ${snapshot.scrubHeldFrame ?? snapshot.intendedFrame}`;
-  if (snapshot.reason === "scrub-confirmed-autoplay") metrics.scrubState = "auto-resumed";
+  else if (snapshot.targetConfirmedFrame !== null) {
+    metrics.scrubState = snapshot.resumeRequested ? "resume requested · target observed" : "target observed";
+  }
   renderMetrics();
 }
 
@@ -301,7 +315,7 @@ function createPlaybackBinding(renderer: Variant): PlaybackBinding {
     renderer,
     frameCount: FRAME_COUNT,
     frameRate: FRAME_RATE,
-    resumeDeadlineMs: 500,
+    resumeDeadlineMs: RESUME_DEADLINE_MS,
     tapeLimit: 32,
   });
   const binding: PlaybackBinding = {
@@ -383,10 +397,24 @@ function renderMetrics(): void {
       : `frame ${playback.confirmedPresentedFrame}`,
   );
   writeMetric(metricElements.confirmation, playback?.confirmationSource ?? "pending");
+  writeMetric(
+    metricElements.targetConfirmed,
+    playback?.targetConfirmedFrame === null || playback?.targetConfirmedFrame === undefined
+      ? "pending"
+      : `frame ${playback.targetConfirmedFrame}`,
+  );
+  writeMetric(
+    metricElements.postSeekProgress,
+    playback?.postSeekProgressFrame === null || playback?.postSeekProgressFrame === undefined
+      ? "pending"
+      : `frame ${playback.postSeekProgressFrame}`,
+  );
+  writeMetric(metricElements.targetTimeout, playback === null ? "pending" : playback.targetConfirmationTimedOut ? "yes" : "no");
   writeMetric(metricElements.delta, playback?.deltaFrames === null || playback?.deltaFrames === undefined ? "pending" : `${playback.deltaFrames > 0 ? "+" : ""}${playback.deltaFrames} frames`);
   writeMetric(metricElements.expected, playback === null ? "pending" : playback.expectedMotion ? "yes" : "no");
   writeMetric(metricElements.actual, playback === null ? "pending" : playback.actualPlayback);
   writeMetric(metricElements.reason, playback === null ? "pending" : playback.reason);
+  writeMetric(metricElements.resumeRequested, playback === null ? "pending" : playback.resumeRequested ? "yes" : "no");
   writeMetric(
     metricElements.progressAge,
     playback?.lastProgressAgeMs === null || playback?.lastProgressAgeMs === undefined
@@ -456,6 +484,58 @@ function updateMediaMetrics(video: HTMLVideoElement, resolutionFallback: string)
   renderMetrics();
 }
 
+/**
+ * canPlayType only describes a decoder claim. Safari releases that decode VP9
+ * while dropping the alpha plane must be rejected after a real frame is
+ * drawable, otherwise the transparent hero silently becomes a black box.
+ */
+function observeNativeAlpha(
+  video: HTMLVideoElement,
+  isCurrent: () => boolean,
+  onFailure: (reason: string) => void,
+): () => void {
+  const probe = document.createElement("canvas");
+  probe.width = 2;
+  probe.height = 2;
+  const context = probe.getContext("2d", { willReadFrequently: true });
+  let checked = false;
+  let rafHandle: number | null = null;
+  const check = (): void => {
+    rafHandle = null;
+    if (checked || !isCurrent() || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !context) return;
+    try {
+      context.clearRect(0, 0, probe.width, probe.height);
+      context.drawImage(video, 0, 0, probe.width, probe.height);
+      const pixels = context.getImageData(0, 0, probe.width, probe.height).data;
+      checked = true;
+      if (!hasTransparentProbePixel(pixels)) {
+        onFailure("A alpha pixel probe failed: decoded frame is opaque/black");
+      } else {
+        metrics.alpha += " · pixel probe passed";
+        renderMetrics();
+        recordEvent("A alpha pixel probe passed");
+      }
+    } catch (error) {
+      checked = true;
+      onFailure(`A alpha pixel probe failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const scheduleCheck = (): void => {
+    if (checked || rafHandle !== null) return;
+    rafHandle = requestAnimationFrame(check);
+  };
+  const onLoadedData = (): void => scheduleCheck();
+  const onPlaying = (): void => scheduleCheck();
+  video.addEventListener("loadeddata", onLoadedData);
+  video.addEventListener("playing", onPlaying);
+  scheduleCheck();
+  return () => {
+    video.removeEventListener("loadeddata", onLoadedData);
+    video.removeEventListener("playing", onPlaying);
+    if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+  };
+}
+
 function setCopy(frame: number): void {
   metrics.frame = Math.max(0, Math.min(LAST_FRAME, frame));
   // These are the same semantic handoff points used by the current hero:
@@ -476,7 +556,7 @@ function setCopy(frame: number): void {
       : 1;
   roleCopy.style.opacity = String(Math.max(0, Math.min(1, roleOpacity)));
   experienceCopy.style.opacity = String(Math.max(0, Math.min(1, experienceOpacity)));
-  if (scrubHeldFrame === null && !scrubPointerActive) scrub.value = String(Math.round(metrics.frame));
+  if (!scrubPointerActive && !(metrics.playback?.seeking ?? false)) scrub.value = String(Math.round(metrics.frame));
   renderMetrics();
 }
 
@@ -666,6 +746,16 @@ function setupNativeVp9(run: number): Runtime | null {
   };
   video.addEventListener("seeked", seekListener);
   let seekStartedAt: number | null = null;
+  let alphaProbeFailed = false;
+  const stopAlphaProbe = observeNativeAlpha(video, isCurrent, (reason) => {
+    if (alphaProbeFailed || !isCurrent()) return;
+    alphaProbeFailed = true;
+    metrics.alpha = "failed: VP9 alpha plane not observable";
+    metrics.error = reason;
+    addFallbackReason(reason);
+    recordEvent(reason);
+    fallbackFrom("a", reason);
+  });
   const pauseForScrub = (): void => {
     if (!isCurrent()) return;
     video.pause();
@@ -701,7 +791,7 @@ function setupNativeVp9(run: number): Runtime | null {
     recordEvent(`scrub released by Play at frame ${target}`);
     playVideo(video, isCurrent);
   };
-  const resumeAfterPresented = (frame: number): void => {
+  const resumeAfterScrubRelease = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
     video.loop = !segmentedPlayback;
@@ -718,7 +808,7 @@ function setupNativeVp9(run: number): Runtime | null {
     }
     playVideo(video, isCurrent);
   };
-  const stopPresentation = observeNativePresentation(video, isCurrent, binding, resumeAfterPresented);
+  const stopPresentation = observeNativePresentation(video, isCurrent, binding);
   playToggle.classList.remove("visible");
   applyHandoff();
   if (shouldResumeHandoff) playVideo(video, isCurrent);
@@ -727,7 +817,7 @@ function setupNativeVp9(run: number): Runtime | null {
     variant: "a",
     pauseForScrub,
     resumeFromScrub,
-    resumeAfterPresented,
+    resumeAfterScrubRelease,
     togglePlayback: () => {
       if (segmentedPlayback && segmentPhase === "waiting") {
         segmentPhase = "main";
@@ -764,6 +854,7 @@ function setupNativeVp9(run: number): Runtime | null {
       recordEvent(`seek requested frame ${target}`);
     },
     destroy: () => {
+      stopAlphaProbe();
       removeMediaListeners();
       stopPresentation();
       video.removeEventListener("timeupdate", timeListener);
@@ -799,26 +890,11 @@ function dispatchMediaReady(binding: PlaybackBinding, video: HTMLVideoElement, i
   });
 }
 
-function completeScrubAfterPresented(frame: number, capturedTarget: number | null): void {
-  if (capturedTarget === null || normalizeFrame(frame) !== normalizeFrame(capturedTarget)) return;
-  scrubCompletedFrameAwaitingChange = normalizeFrame(capturedTarget);
-  scrubHeldFrame = null;
-  metrics.scrubHeldFrame = null;
-  metrics.scrubState = "auto-resumed";
-  metrics.state = `playing from scrub frame ${normalizeFrame(capturedTarget)}`;
-  scrub.value = String(normalizeFrame(capturedTarget));
-  playToggle.textContent = "Pause animation";
-  playToggle.classList.remove("visible");
-  renderMetrics();
-  recordEvent(`scrub presented frame ${normalizeFrame(capturedTarget)}; autoplay resumed`);
-}
-
 function dispatchPresentedFrame(
   binding: PlaybackBinding,
   isCurrent: () => boolean,
   video: HTMLVideoElement,
   mediaTime: number,
-  resumeAfterPresented: (frame: number) => void,
   source: PresentationSource,
 ): void {
   if (!isCurrent() || playbackBinding !== binding || !Number.isFinite(mediaTime)) return;
@@ -828,7 +904,7 @@ function dispatchPresentedFrame(
   // forward progress in the public gauges.
   if (video.paused && !before.seeking) return;
   const frame = frameFromVideoTime(video, mediaTime);
-  const state = binding.dispatch({
+  binding.dispatch({
     type: "media-presented",
     atMs: playbackTimeMs(),
     frame,
@@ -836,10 +912,6 @@ function dispatchPresentedFrame(
     source,
   });
   setCopy(frame);
-  if (before.seeking && state.reason === "scrub-confirmed-autoplay") {
-    completeScrubAfterPresented(frame, before.scrubHeldFrame);
-    resumeAfterPresented(frame);
-  }
 }
 
 /**
@@ -852,7 +924,6 @@ function observeNativePresentation(
   video: HTMLVideoElement,
   isCurrent: () => boolean,
   binding: PlaybackBinding,
-  resumeAfterPresented: (frame: number) => void,
 ): () => void {
   const frameVideo = video as FrameVideo;
   const hasVideoFrameCallback = typeof frameVideo.requestVideoFrameCallback === "function";
@@ -860,7 +931,7 @@ function observeNativePresentation(
   let rafHandle: number | null = null;
   let videoFrameHandle: number | null = null;
   const emit = (mediaTime = video.currentTime, source: PresentationSource = "timeupdate-estimate"): void => {
-    if (!stopped) dispatchPresentedFrame(binding, isCurrent, video, mediaTime, resumeAfterPresented, source);
+    if (!stopped) dispatchPresentedFrame(binding, isCurrent, video, mediaTime, source);
   };
   const scheduleVideoFrame = (): void => {
     if (stopped || !hasVideoFrameCallback) return;
@@ -879,7 +950,7 @@ function observeNativePresentation(
   };
   const onSeeked = (): void => {
     // With rVFC, `seeked` reports a requested timeline position, not a
-    // presented frame. Let only the pending rVFC confirm convergence; use the
+    // presented frame. Let only the pending rVFC confirm presentation; use the
     // seeked estimate solely on browsers without rVFC.
     if (hasVideoFrameCallback) scheduleVideoFrame();
     else emit(video.currentTime, "seeked-estimate");
@@ -908,6 +979,7 @@ function createPackedWebGl(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
   onPresented?: (mediaTime: number, source: PresentationSource) => void,
+  onAlphaProbe?: (passed: boolean, reason?: string) => void,
 ): (() => void) | null {
   const gl = canvas.getContext("webgl", {
     alpha: true,
@@ -977,6 +1049,11 @@ function createPackedWebGl(
   // HTML video/image rows are top-to-bottom. Flip once so the quad's bottom
   // edge remains the asset's bottom edge, matching the native and WebP paths.
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+  // The shader writes straight (not premultiplied) RGB plus the matte alpha.
+  // Make the upload mode explicit so an implementation default cannot turn
+  // transparent black/white corners into an opaque fringe.
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+  gl.disable(gl.BLEND);
   gl.useProgram(program);
   gl.enableVertexAttribArray(position);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -987,6 +1064,7 @@ function createPackedWebGl(
   let stopped = false;
   let rafHandle: number | null = null;
   let videoFrameHandle: number | null = null;
+  let alphaChecked = false;
   const frameVideo = video as FrameVideo;
   const draw = (mediaTime?: number, source: PresentationSource = "webgl-draw"): void => {
     if (stopped || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
@@ -1005,6 +1083,25 @@ function createPackedWebGl(
       return;
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (!alphaChecked && onAlphaProbe) {
+      const pixels = new Uint8Array(16);
+      const probe = new Uint8Array(4);
+      const widthPixels = Math.max(1, canvas.width);
+      const heightPixels = Math.max(1, canvas.height);
+      const points = [
+        [0, 0],
+        [widthPixels - 1, 0],
+        [0, heightPixels - 1],
+        [widthPixels - 1, heightPixels - 1],
+      ] as const;
+      points.forEach(([x, y], index) => {
+        gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, probe);
+        pixels.set(probe, index * 4);
+      });
+      alphaChecked = true;
+      if (hasTransparentProbePixel(pixels)) onAlphaProbe(true);
+      else onAlphaProbe(false, "B alpha pixel probe failed: matte rendered opaque/black");
+    }
     markFirstVisible();
     const time = mediaTime ?? video.currentTime;
     setCopy(time * FRAME_RATE);
@@ -1076,11 +1173,26 @@ function setupPackedH264(run: number): Runtime | null {
   const handoff = binding.snapshot();
   const handoffFrame = normalizeFrame(modelPlaybackHandoffFrame(handoff));
   const shouldResumeHandoff = shouldAutoplayHandoff(handoff);
-  let resumeAfterPresented: (frame: number) => void = () => undefined;
+  let alphaProbeFailed = false;
+  let resumeAfterScrubRelease: (frame: number) => void = () => undefined;
   const stopWebGl = shouldForceFailure("webgl")
     ? null
     : createPackedWebGl(video, canvas, (mediaTime, source) => {
-      dispatchPresentedFrame(binding, isCurrent, video, mediaTime, resumeAfterPresented, source);
+      dispatchPresentedFrame(binding, isCurrent, video, mediaTime, source);
+    }, (passed, reason) => {
+      if (!isCurrent() || alphaProbeFailed) return;
+      alphaProbeFailed = !passed;
+      if (passed) {
+        metrics.alpha += " · pixel probe passed";
+        renderMetrics();
+        recordEvent("B alpha pixel probe passed");
+      } else {
+        metrics.alpha = "failed: packed matte not observable";
+        metrics.error = reason ?? "B alpha pixel probe failed";
+        addFallbackReason(metrics.error);
+        recordEvent(metrics.error);
+        fallbackFrom("b", metrics.error);
+      }
     });
   if (!stopWebGl) {
     if (shouldForceFailure("webgl")) injectFailure("webgl");
@@ -1217,7 +1329,7 @@ function setupPackedH264(run: number): Runtime | null {
     recordEvent(`scrub released by Play at frame ${target}`);
     playVideo(video, isCurrent);
   };
-  resumeAfterPresented = (frame: number): void => {
+  resumeAfterScrubRelease = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
     video.loop = !segmentedPlayback;
@@ -1242,7 +1354,7 @@ function setupPackedH264(run: number): Runtime | null {
     variant: "b",
     pauseForScrub,
     resumeFromScrub,
-    resumeAfterPresented,
+    resumeAfterScrubRelease,
     togglePlayback: () => {
       if (segmentedPlayback && segmentPhase === "waiting") {
         segmentPhase = "main";
@@ -1301,6 +1413,9 @@ function setupWebpSequence(run: number): Runtime {
   canvas.className = "hero-render hero-render-canvas";
   canvas.width = SOURCE_WIDTH;
   canvas.height = SOURCE_HEIGHT;
+  // Keep the sequence canvas clickable for the prototype's direct play/pause
+  // acceptance trace; the stage itself remains pointer-transparent.
+  canvas.style.pointerEvents = "auto";
   canvas.setAttribute("aria-hidden", "true");
   mediaStage.replaceChildren(canvas);
   const context = canvas.getContext("2d", { alpha: true });
@@ -1325,14 +1440,17 @@ function setupWebpSequence(run: number): Runtime {
       variant: "c",
       pauseForScrub: () => undefined,
       resumeFromScrub: () => undefined,
-      resumeAfterPresented: () => undefined,
+      resumeAfterScrubRelease: () => undefined,
       togglePlayback: () => undefined,
       seek: () => undefined,
       destroy: () => undefined,
     };
   }
 
-  const isCurrent = () => runId === run && runtime?.variant === "c";
+  // During setup `runtime` is assigned only after this function returns. The
+  // initial pump must still be allowed to request frame 0; runId protects
+  // late callbacks from a renderer that has already been replaced.
+  const isCurrent = () => runId === run && (runtime?.variant === "c" || (runtime === null && currentVariant === "c"));
   const images: Array<HTMLImageElement | null> = Array.from({ length: FRAME_COUNT }, () => null);
   const loaded = new Set<number>();
   const failed = new Set<number>();
@@ -1355,36 +1473,33 @@ function setupWebpSequence(run: number): Runtime {
   let startedAt: number | null = null;
   let currentFrame = handoffFrame;
   let pendingSeek: { frame: number; startedAt: number } | null = null;
-  let resumeAfterPresented: (frame: number) => void = () => undefined;
+  let resumeAfterScrubRelease: (frame: number) => void = () => undefined;
 
-  const draw = (frame: number): void => {
-    if (!isCurrent() || stopped) return;
+  const draw = (frame: number, allowFallback = true): boolean => {
+    if (!isCurrent() || stopped) return false;
     const exact = images[frame];
+    if (!exact && !allowFallback) return false;
     const fallback = exact ?? images.slice(0, frame + 1).reverse().find((image) => image !== null) ?? images.find((image) => image !== null);
-    if (!fallback) return;
+    if (!fallback) return false;
     const width = SOURCE_WIDTH;
     const height = SOURCE_HEIGHT;
     context.clearRect(0, 0, width, height);
     context.drawImage(fallback, 0, 0, width, height);
     markFirstVisible();
-    currentFrame = frame;
+    if (exact) currentFrame = frame;
     // Do not let a fallback copy of an as-yet-unloaded frame advance the
     // sequence clock. The first exact drawable frame establishes the clock;
     // on a renderer handoff that exact frame is the handed-off target.
     if (startedAt === null && exact) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
     const before = binding.snapshot();
     if (exact && (playing || before.seeking)) {
-      const state = binding.dispatch({
+      binding.dispatch({
         type: "media-presented",
         atMs: playbackTimeMs(),
         frame,
         currentTimeSeconds: frame / FRAME_RATE,
         source: "sequence-draw",
       });
-      if (before.seeking && state.reason === "scrub-confirmed-autoplay") {
-        completeScrubAfterPresented(frame, before.scrubHeldFrame);
-        resumeAfterPresented(frame);
-      }
     }
     setCopy(frame);
     if (pendingSeek && pendingSeek.frame === frame && exact) {
@@ -1392,6 +1507,7 @@ function setupWebpSequence(run: number): Runtime {
       pendingSeek = null;
       recordEvent(`seek complete (${formatMs(metrics.seekMs)})`);
     }
+    return exact !== null;
   };
 
   const loadOne = (frame: number): void => {
@@ -1454,21 +1570,35 @@ function setupWebpSequence(run: number): Runtime {
         return;
       }
       const elapsed = (now - startedAt) / 1000;
-      const frame = segmentedPlayback
+      const desiredFrame = segmentedPlayback
         ? Math.min(LAST_FRAME, Math.floor(elapsed * FRAME_RATE))
         : Math.floor((elapsed % FRAME_DURATION_SECONDS) * FRAME_RATE);
-      if (frame !== currentFrame) draw(frame);
+      let frame = currentFrame;
+      if (desiredFrame !== currentFrame) {
+        const next = nextExactSequenceFrame(currentFrame, desiredFrame, loaded, FRAME_COUNT, !segmentedPlayback);
+        if (next === null) {
+          // Hold the logical clock at the last exact frame until the next
+          // contiguous image is decoded. A fallback copy may be visible, but
+          // it must never make the sequence claim progress it cannot draw.
+          const nextCandidate = currentFrame < LAST_FRAME ? currentFrame + 1 : (segmentedPlayback ? null : 0);
+          if (nextCandidate !== null) loadOne(nextCandidate);
+          startedAt = now - (currentFrame / FRAME_RATE) * 1000;
+        } else {
+          draw(next, false);
+          frame = next;
+        }
+      }
       if (segmentedPlayback && segmentPhase === "intro" && frame >= INTRO_END_FRAME) {
-        draw(INTRO_END_FRAME);
+        draw(INTRO_END_FRAME, false);
         playing = false;
-      segmentPhase = "waiting";
-      metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
-      binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
-      playToggle.textContent = "Resume main segment";
+        segmentPhase = "waiting";
+        metrics.segment = `exact pause · frame ${INTRO_END_FRAME} · resume on tap`;
+        binding.dispatch({ type: "media-paused", atMs: playbackTimeMs(), reason: "segment-pause@31" });
+        playToggle.textContent = "Resume main segment";
         playToggle.classList.add("visible");
         recordEvent(`segment pause @ frame ${INTRO_END_FRAME}`);
       } else if (segmentedPlayback && segmentPhase === "main" && frame >= LAST_FRAME) {
-        draw(LAST_FRAME);
+        draw(LAST_FRAME, false);
         playing = false;
         segmentPhase = "terminal";
         metrics.segment = `exact terminal pause · frame ${LAST_FRAME}`;
@@ -1483,13 +1613,21 @@ function setupWebpSequence(run: number): Runtime {
   const startAnimation = (): void => {
     if (animationHandle === null) animationHandle = requestAnimationFrame(tick);
   };
+  const startClockFromFrame = (frame: number): void => {
+    if (loaded.has(frame)) startedAt = currentTime() - (frame / FRAME_RATE) * 1000;
+    else {
+      startedAt = null;
+      loadOne(frame);
+    }
+  };
   const togglePlayback = (): void => {
     if (segmentedPlayback && segmentPhase === "waiting") {
       segmentPhase = "main";
       playing = true;
-      startedAt = currentTime() - (INTRO_END_FRAME / FRAME_RATE) * 1000;
+      startClockFromFrame(INTRO_END_FRAME);
       metrics.segment = `main segment running · terminal pause @ frame ${LAST_FRAME}`;
       playToggle.classList.remove("visible");
+      binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
       recordEvent("WebP resumed main segment");
       startAnimation();
       return;
@@ -1498,18 +1636,20 @@ function setupWebpSequence(run: number): Runtime {
       segmentPhase = "intro";
       playing = true;
       currentFrame = 0;
-      startedAt = currentTime();
+      startClockFromFrame(0);
       metrics.segment = `intro segment running · pause @ frame ${INTRO_END_FRAME}`;
       playToggle.classList.remove("visible");
+      binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
       recordEvent("WebP replayed intro segment");
       startAnimation();
       return;
     }
     playing = !playing;
     if (playing) {
-      startedAt = currentTime() - (currentFrame / FRAME_RATE) * 1000;
+      startClockFromFrame(currentFrame);
       metrics.state = "playing WebP";
       playToggle.classList.remove("visible");
+      binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
       startAnimation();
     } else {
       metrics.state = "paused WebP";
@@ -1533,27 +1673,28 @@ function setupWebpSequence(run: number): Runtime {
       if (target >= LAST_FRAME) {
         segmentPhase = "intro";
         currentFrame = 0;
-        startedAt = currentTime();
+        startClockFromFrame(0);
       } else if (target < INTRO_END_FRAME) {
         segmentPhase = "intro";
         currentFrame = target;
-        startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+        startClockFromFrame(target);
       } else {
         segmentPhase = "main";
         currentFrame = target;
-        startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+        startClockFromFrame(target);
       }
     } else {
       currentFrame = target;
-      startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+      startClockFromFrame(target);
     }
     playing = true;
     metrics.state = `playing from scrub frame ${target}`;
     playToggle.classList.remove("visible");
     recordEvent(`scrub released by Play at frame ${target}`);
+    binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
     startAnimation();
   };
-  resumeAfterPresented = (frame: number): void => {
+  resumeAfterScrubRelease = (frame: number): void => {
     if (!isCurrent()) return;
     const target = normalizeFrame(frame);
     if (segmentedPlayback) {
@@ -1569,8 +1710,9 @@ function setupWebpSequence(run: number): Runtime {
         : `main segment running · terminal pause @ frame ${LAST_FRAME}`;
     }
     currentFrame = target;
-    startedAt = currentTime() - (target / FRAME_RATE) * 1000;
+    startClockFromFrame(target);
     playing = true;
+    binding.dispatch({ type: "media-playing", atMs: playbackTimeMs() });
     startAnimation();
   };
   const seek = (frame: number): void => {
@@ -1589,6 +1731,11 @@ function setupWebpSequence(run: number): Runtime {
     recordEvent(`seek requested frame ${target}`);
   };
   const clickListener = (): void => {
+    const playback = binding.snapshot();
+    binding.dispatch({
+      type: playback.actualPlayback === "playing" ? "user-pause" : "user-play",
+      atMs: playbackTimeMs(),
+    });
     togglePlayback();
   };
   canvas.addEventListener("click", clickListener);
@@ -1600,7 +1747,7 @@ function setupWebpSequence(run: number): Runtime {
     variant: "c",
     pauseForScrub,
     resumeFromScrub,
-    resumeAfterPresented,
+    resumeAfterScrubRelease,
     togglePlayback,
     seek,
     destroy: () => {
@@ -1682,6 +1829,7 @@ function resetForRequestedVariant(variant: Variant): void {
   scrubHeldFrame = null;
   scrubPointerActive = false;
   scrubCompletedFrameAwaitingChange = null;
+  scrubResumeIssued = false;
   const probe = document.createElement("video");
   metrics.vp9 = probe.canPlayType('video/webm; codecs="vp09.00.10.08"') || "unsupported";
   metrics.h264 = probe.canPlayType('video/mp4; codecs="avc1.64001f"') || "unsupported";
@@ -1748,10 +1896,12 @@ function updateSwitcher(): void {
 function beginScrub(frame: number): void {
   const target = normalizeFrame(frame);
   scrubCompletedFrameAwaitingChange = null;
-  if (scrubHeldFrame === null) {
-    runtime?.pauseForScrub();
-    recordEvent(`scrub started at frame ${target}`);
-  }
+  scrubResumeIssued = false;
+  // Every new input gesture must stop an already-running renderer. Keeping
+  // this unconditional is important for C: after a prior release its clock
+  // is running even though the model still retains the held target.
+  runtime?.pauseForScrub();
+  recordEvent(`scrub started at frame ${target}`);
   playbackBinding?.dispatch({ type: "scrub-input", atMs: playbackTimeMs(), frame: target });
   setScrubHold(target, "seeking");
   metrics.state = `scrubbing frame ${target}`;
@@ -1765,10 +1915,39 @@ function scrubInputFrame(event: Event): number | null {
   return Number.isFinite(value) ? normalizeFrame(value) : null;
 }
 
+function requestScrubResume(
+  eventType: "scrub-pointerup" | "scrub-change",
+  capturedFrame: number | null,
+): void {
+  const target = scrubHeldFrame;
+  if (target === null) {
+    if (scrubCompletedFrameAwaitingChange !== null) {
+      playbackBinding?.dispatch({ type: eventType, atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
+      scrubCompletedFrameAwaitingChange = null;
+    }
+    return;
+  }
+  scrubCompletedFrameAwaitingChange = target;
+  playbackBinding?.dispatch({ type: eventType, atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
+  scrubPointerActive = false;
+  scrub.value = String(target);
+  metrics.scrubState = "resume requested · target presentation observational";
+  metrics.state = `resume requested from scrub frame ${target}`;
+  // Pointerup and change can both arrive for one gesture. Only the first
+  // release calls the renderer; the second lifecycle event is an acknowledgement.
+  if (!scrubResumeIssued) {
+    scrubResumeIssued = true;
+    runtime?.resumeAfterScrubRelease(target);
+  }
+  renderMetrics();
+  recordEvent(`scrub ${eventType.replace("scrub-", "")} requested resume at frame ${target}`);
+}
+
 playToggle.addEventListener("click", () => {
   if (scrubHeldFrame !== null && runtime) {
     const heldFrame = scrubHeldFrame;
     scrubPointerActive = false;
+    scrubResumeIssued = false;
     playbackBinding?.dispatch({ type: "user-play", atMs: playbackTimeMs() });
     setScrubHold(null, "idle");
     runtime.resumeFromScrub(heldFrame);
@@ -1785,35 +1964,13 @@ playToggle.addEventListener("click", () => {
 scrub.addEventListener("pointerdown", () => {
   scrubPointerActive = true;
 });
-scrub.addEventListener("pointerup", () => {
+scrub.addEventListener("pointerup", (scrubEvent) => {
   scrubPointerActive = false;
-  if (scrubHeldFrame === null) {
-    if (scrubCompletedFrameAwaitingChange !== null) {
-      playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
-    }
-    return;
-  }
-  metrics.scrubState = "seeking · waiting for presented frame";
-  metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
-  scrub.value = String(scrubHeldFrame);
-  playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
-  renderMetrics();
-  recordEvent(`scrub pointer released; waiting for frame ${scrubHeldFrame}`);
+  requestScrubResume("scrub-pointerup", scrubInputFrame(scrubEvent));
 });
-scrub.addEventListener("pointercancel", () => {
+scrub.addEventListener("pointercancel", (scrubEvent) => {
   scrubPointerActive = false;
-  if (scrubHeldFrame === null) {
-    if (scrubCompletedFrameAwaitingChange !== null) {
-      playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
-    }
-    return;
-  }
-  metrics.scrubState = "seeking · waiting for presented frame";
-  metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
-  scrub.value = String(scrubHeldFrame);
-  playbackBinding?.dispatch({ type: "scrub-pointerup", atMs: playbackTimeMs(), frame: Number(scrub.value) });
-  renderMetrics();
-  recordEvent(`scrub pointer canceled; waiting for frame ${scrubHeldFrame}`);
+  requestScrubResume("scrub-pointerup", scrubInputFrame(scrubEvent));
 });
 scrub.addEventListener("change", (scrubEvent) => {
   const capturedFrame = scrubInputFrame(scrubEvent);
@@ -1823,24 +1980,13 @@ scrub.addEventListener("change", (scrubEvent) => {
     scrub.value = String(completedFrame);
     playbackBinding?.dispatch({ type: "scrub-change", atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
     renderMetrics();
-    recordEvent(`scrub change acknowledged after presented frame ${completedFrame}`);
+    recordEvent(`scrub change acknowledged after release at frame ${completedFrame}`);
     return;
   }
   const target = scrubHeldFrame ?? capturedFrame;
   if (target === null) return;
-  // `input` already sought the final captured value. A change event only
-  // closes the pointer gesture; it never re-reads a possibly overwritten DOM
-  // value or issues a duplicate seek.
   if (scrubHeldFrame === null) beginScrub(target);
-  scrubPointerActive = false;
-  if (scrubHeldFrame !== null) {
-    scrub.value = String(scrubHeldFrame);
-    metrics.scrubState = "seeking · waiting for presented frame";
-    metrics.state = `scrub seeking frame ${scrubHeldFrame}`;
-    playbackBinding?.dispatch({ type: "scrub-change", atMs: playbackTimeMs(), frame: capturedFrame ?? undefined });
-    renderMetrics();
-    recordEvent(`scrub change finalized frame ${scrubHeldFrame}; target remains captured`);
-  }
+  requestScrubResume("scrub-change", capturedFrame);
 });
 scrub.addEventListener("input", (scrubEvent) => {
   const capturedFrame = scrubInputFrame(scrubEvent);
