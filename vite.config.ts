@@ -30,4 +30,14 @@ function copyRuntimeAssets(): Plugin {
 
 export default defineConfig({
   plugins: [copyRuntimeAssets()],
+  build: {
+    // Keep the architecture study as a directly addressable static page in
+    // preview/dist; it never replaces the production portfolio entrypoint.
+    rollupOptions: {
+      input: {
+        main: path.resolve("index.html"),
+        videoPrototype: path.resolve("prototype-video.html"),
+      },
+    },
+  },
 });
