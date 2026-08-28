@@ -66,7 +66,9 @@ const MP4_SOURCE = "/video-prototype/hero-color-matte.mp4";
 const HQ_WEBM_SOURCE = "/video-prototype/hq-hero-alpha-vp9.webm";
 const HQ_MP4_SOURCE = "/video-prototype/hq-hero-color-matte.mp4";
 const prototypeParams = new URLSearchParams(window.location.search);
-const segmentedPlayback = prototypeParams.get("mode") !== "loop";
+// Continuous playback is the comparison default. The production-style
+// checkpoint at frame 31 is opt-in so a bare prototype URL cannot look broken.
+const segmentedPlayback = prototypeParams.get("mode") === "segmented";
 const requestedQuality = prototypeParams.get("quality")?.toLowerCase() === "hq" ? "hq" : "standard";
 const activeQuality: "standard" | "hq" = requestedQuality === "hq" && HQ_MP4_BYTES > 0 ? "hq" : "standard";
 const nativeQuality: "standard" | "hq" = activeQuality === "hq" && HQ_WEBM_BYTES > 0 ? "hq" : "standard";

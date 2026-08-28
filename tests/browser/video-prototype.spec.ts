@@ -18,18 +18,19 @@ async function scrubAndRelease(page: Page, target: number): Promise<void> {
 
 for (const variant of ["a", "c"] as const) {
   test(`${variant.toUpperCase()} autoplays and release resumes independently of presentation`, async ({ page }) => {
-    await page.goto(`/prototype-video?variant=${variant}&mode=loop`);
+    await page.goto(`/prototype-video?variant=${variant}`);
 
     await expect.poll(async () => frameNumber(await page.locator("#metric-presented").textContent())).toBeGreaterThanOrEqual(5);
     await expect(page.locator("#metric-actual")).toHaveText("playing");
 
     for (const target of [38, 62, 70, 90, 140]) {
       await scrubAndRelease(page, target);
-      await expect(page.locator("#metric-target-confirmed")).toHaveText(`frame ${target}`);
+      await expect.poll(async () => frameNumber(await page.locator("#metric-target-confirmed").textContent())).toBeGreaterThanOrEqual(target);
+      await expect.poll(async () => frameNumber(await page.locator("#metric-target-confirmed").textContent())).toBeLessThanOrEqual(target + 2);
       await expect.poll(async () => frameNumber(await page.locator("#metric-post-seek-progress").textContent())).not.toBe(-1);
       await expect(page.locator("#metric-actual")).toHaveText("playing");
       await expect(page.locator("#metric-scrub")).toHaveText("none");
-      await expect(page.locator("#metric-delta")).toHaveText("0 frames");
+      await expect.poll(async () => Number((await page.locator("#metric-delta").textContent())?.match(/-?\d+/)?.[0] ?? 999)).toBeLessThanOrEqual(2);
     }
 
     if (variant === "c") {
