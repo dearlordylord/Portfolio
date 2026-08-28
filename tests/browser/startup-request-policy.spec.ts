@@ -40,7 +40,10 @@ test("production build ships distinct HTML and fingerprinted asset cache policie
 
   // Assert the complete routing contract so swapping the two policies cannot
   // leave this release gate green while caching HTML immutably.
-  expect(headersFile).toBe(`/*
+  expect(headersFile).toBe(`/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
   Cache-Control: public, max-age=0, must-revalidate
 
 /assets/*

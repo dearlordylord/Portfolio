@@ -1,4 +1,7 @@
-/*
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
   Cache-Control: public, max-age=0, must-revalidate
 
 /assets/*
