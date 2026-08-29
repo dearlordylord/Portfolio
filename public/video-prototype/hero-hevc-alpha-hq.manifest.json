@@ -1,0 +1,63 @@
+{
+  "assetId" : "hero-hevc-alpha-hq-v1",
+  "encode" : {
+    "alphaMode" : "premultiplied",
+    "alphaQuality" : 1,
+    "averageBitRate" : 8000000,
+    "cleanAperture" : "none",
+    "codec" : "hevcWithAlpha",
+    "codedHeight" : 720,
+    "codedWidth" : 1280,
+    "container" : "mov",
+    "contentRect" : {
+      "height" : 720,
+      "width" : 1280,
+      "x" : 0,
+      "y" : 0
+    },
+    "maxKeyframeInterval" : 15,
+    "paddingAlpha" : "not-applicable",
+    "paddingRowCount" : 0,
+    "paddingRowEdge" : "none"
+  },
+  "output" : {
+    "bytes" : 11151391,
+    "cleanAperture" : "none",
+    "codec" : "hvc1",
+    "codedHeight" : 720,
+    "codedWidth" : 1280,
+    "containsAlphaChannel" : true,
+    "contentRect" : {
+      "height" : 720,
+      "width" : 1280,
+      "x" : 0,
+      "y" : 0
+    },
+    "decodedAlphaMaximum" : 255,
+    "decodedAlphaMinimum" : 0,
+    "decodedContentAlphaMaximum" : 255,
+    "decodedContentAlphaMinimum" : 0,
+    "decodedPaddingAlphaMaximum" : 0,
+    "decodedPaddingAlphaMinimum" : 0,
+    "durationSeconds" : 10,
+    "fileName" : "hero-hevc-alpha-hq.mov",
+    "frameCount" : 150,
+    "frameRate" : 15,
+    "height" : 720,
+    "paddingAlpha" : "not-applicable",
+    "paddingRowCount" : 0,
+    "paddingRowEdge" : "none",
+    "sha256" : "54ef6d6139d8690f0ea5bd8ab7c5dcfebe3176c6f462af7dc9b093fc3cb1a14c",
+    "width" : 1280
+  },
+  "schemaVersion" : 1,
+  "source" : {
+    "durationSeconds" : 10,
+    "frameCount" : 150,
+    "frameRate" : 15,
+    "height" : 720,
+    "inputPattern" : "frame_%03d_delay-0.067s.webp",
+    "sourceSetSha256" : "1b0887fb70487d7abd0de6e1de5ed2c154ff140a645d8393e4111cf7d3807a66",
+    "width" : 1280
+  }
+}

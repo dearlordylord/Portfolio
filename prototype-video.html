@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#edeef6" />
+    <title>PROTOTYPE — video hero architecture</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      :root {
+        --bg: #edeef6;
+        --surface: rgba(255, 255, 255, 0.86);
+        --surface-strong: rgba(255, 255, 255, 0.95);
+        --line: rgba(120, 100, 180, 0.16);
+        --text: #1a1830;
+        --muted: rgba(26, 24, 48, 0.54);
+        --pink: #eb0065;
+        --purple: #984eff;
+        --hero-stage-top: 38svh;
+        --hero-stage-bottom: 15svh;
+        --hero-overlap: 15svh;
+      }
+      html, body { width: 100%; min-height: 100%; margin: 0; }
+      html { background: var(--bg); }
+      body {
+        overflow-x: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+
+      .blob {
+        position: fixed;
+        z-index: 0;
+        width: 42rem;
+        height: 42rem;
+        border-radius: 50%;
+        filter: blur(120px);
+        opacity: 0.12;
+        pointer-events: none;
+      }
+      .blob.one { top: -18rem; left: -14rem; background: #984eff; }
+      .blob.two { top: 28svh; right: -18rem; width: 34rem; height: 34rem; background: #9333ea; }
+      .blob.three { bottom: -12rem; left: 22%; width: 26rem; height: 26rem; background: #eb0065; }
+
+      .proto-nav {
+        position: fixed;
+        z-index: 90;
+        top: 0;
+        right: 0;
+        left: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        min-height: 4.25rem;
+        padding: 0.9rem clamp(1rem, 4vw, 4rem);
+        border-bottom: 1px solid var(--line);
+        background: rgba(237, 238, 246, 0.82);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+      }
+      .proto-mark {
+        color: var(--text);
+        font-family: Syne, sans-serif;
+        font-size: 0.9rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-decoration: none;
+      }
+      .proto-nav-label {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+      .proto-nav-link {
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-decoration: none;
+      }
+      .proto-nav-link:hover { color: var(--text); }
+
+      #video-prototype-root { position: relative; z-index: 1; }
+      .hero-prototype {
+        position: relative;
+        min-height: 100svh;
+        overflow: hidden;
+        isolation: isolate;
+      }
+      .hero-copy {
+        position: absolute;
+        z-index: 4;
+        top: min(calc(9svh + 4.25rem), calc(38svh - 9rem));
+        right: 1.5rem;
+        left: 1.5rem;
+        text-align: center;
+        pointer-events: none;
+      }
+      .hero-eyebrow {
+        margin: 0 0 0.55rem;
+        color: var(--pink);
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+      }
+      .hero-name {
+        margin: 0;
+        color: var(--text);
+        font-family: Syne, sans-serif;
+        font-size: clamp(2.1rem, 7vw, 5.5rem);
+        font-weight: 800;
+        letter-spacing: -0.055em;
+        line-height: 0.96;
+      }
+      .hero-name span {
+        display: block;
+        background: linear-gradient(135deg, var(--pink), var(--purple));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .copy-slot {
+        position: relative;
+        min-height: 3.4rem;
+        margin-top: 1rem;
+      }
+      .copy-line {
+        position: absolute;
+        right: 0;
+        left: 0;
+        margin: 0;
+        color: var(--muted);
+        font-size: clamp(0.88rem, 1.6vw, 1.08rem);
+        font-weight: 500;
+        opacity: 0;
+        transition: opacity 120ms linear;
+      }
+      .copy-line.role { color: var(--text); font-weight: 700; }
+      .hero-subnote {
+        margin: 0.5rem 0 0;
+        color: rgba(26, 24, 48, 0.36);
+        font-size: 0.67rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .media-stage {
+        position: absolute;
+        z-index: 2;
+        top: var(--hero-stage-top);
+        right: 0;
+        bottom: var(--hero-stage-bottom);
+        left: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .media-stage::after {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        background: linear-gradient(to bottom, rgba(237, 238, 246, 0.02), rgba(237, 238, 246, 0.08));
+        content: "";
+        pointer-events: none;
+      }
+      .hero-render {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        transform: scale(0.77);
+        transform-origin: center bottom;
+        object-fit: cover;
+        object-position: center bottom;
+        background: transparent;
+      }
+      /*
+       * The canonical H MOV preserves the unreduced 1280×720 source directly.
+       * The stage already has definite dimensions and object-fit: cover, so
+       * this class records the visible HQ contract without sizing the stage.
+       */
+      .hero-render-hevc { aspect-ratio: 1280 / 720; }
+      .hero-render-source { visibility: hidden; }
+      .hero-render-canvas { visibility: visible; }
+
+      .stage-hint {
+        position: absolute;
+        z-index: 4;
+        right: 0;
+        bottom: 1.25rem;
+        left: 0;
+        color: rgba(26, 24, 48, 0.38);
+        font-size: 0.66rem;
+        letter-spacing: 0.14em;
+        text-align: center;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+      .play-toggle {
+        position: absolute;
+        z-index: 5;
+        right: 50%;
+        bottom: 3.6rem;
+        display: none;
+        min-width: 7.5rem;
+        min-height: 2.75rem;
+        padding: 0.5rem 1rem;
+        transform: translateX(50%);
+        border: 1px solid rgba(152, 78, 255, 0.24);
+        border-radius: 100px;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 8px 24px rgba(120, 100, 180, 0.15);
+        color: var(--text);
+        font-size: 0.78rem;
+        font-weight: 700;
+        pointer-events: auto;
+      }
+      .play-toggle.visible { display: inline-flex; align-items: center; justify-content: center; }
+
+      .below-hero {
+        position: relative;
+        z-index: 8;
+        min-height: 24rem;
+        margin-top: calc(0px - var(--hero-overlap));
+        padding: 8rem clamp(1rem, 8vw, 8rem) 7rem;
+        border-radius: 0;
+        background: rgba(247, 247, 251, 0.97);
+        box-shadow: 0 -20px 60px rgba(120, 100, 180, 0.1);
+      }
+      .below-hero-inner { max-width: 56rem; margin: 0 auto; }
+      .section-label {
+        margin: 0 0 0.8rem;
+        color: var(--pink);
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      .below-hero h2 {
+        margin: 0;
+        font-family: Syne, sans-serif;
+        font-size: clamp(1.7rem, 4vw, 3rem);
+        letter-spacing: -0.04em;
+        line-height: 1.05;
+      }
+      .below-hero p { max-width: 40rem; color: var(--muted); }
+
+      .metrics-panel {
+        position: fixed;
+        z-index: 70;
+        top: 5.5rem;
+        right: clamp(0.75rem, 2.2vw, 2rem);
+        width: min(22rem, calc(100vw - 1.5rem));
+        max-height: calc(100svh - 7rem);
+        overflow: auto;
+        padding: 1rem;
+        border: 1px solid rgba(152, 78, 255, 0.18);
+        border-radius: 1rem;
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: 0 12px 42px rgba(120, 100, 180, 0.16);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+      .metrics-kicker {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.2rem;
+        color: var(--pink);
+        font-size: 0.64rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .metrics-title {
+        margin: 0 0 0.8rem;
+        font-family: Syne, sans-serif;
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
+      }
+      .metric-list { display: grid; gap: 0.45rem; margin: 0; }
+      .metric-row {
+        display: grid;
+        grid-template-columns: 8.3rem 1fr;
+        gap: 0.55rem;
+        padding-bottom: 0.42rem;
+        border-bottom: 1px solid rgba(120, 100, 180, 0.1);
+        font-size: 0.68rem;
+        line-height: 1.25;
+      }
+      .metric-row dt { color: var(--muted); }
+      .metric-row dd { min-width: 0; margin: 0; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+      .metric-row dd.good { color: #15803d; }
+      .metric-row dd.warn { color: #b45309; }
+      .metric-row dd.bad { color: #b91c1c; }
+      .events-title {
+        margin: 0.85rem 0 0.3rem;
+        color: var(--muted);
+        font-size: 0.63rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .events {
+        display: grid;
+        gap: 0.15rem;
+        max-height: 6.5rem;
+        margin: 0;
+        padding: 0;
+        overflow: auto;
+        list-style: none;
+        color: rgba(26, 24, 48, 0.62);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.61rem;
+      }
+      .metric-note {
+        margin: 0.8rem 0 0;
+        color: rgba(26, 24, 48, 0.46);
+        font-size: 0.62rem;
+        line-height: 1.4;
+      }
+
+      .scrub {
+        position: fixed;
+        z-index: 80;
+        right: 50%;
+        bottom: 4.8rem;
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        width: min(30rem, calc(100vw - 2rem));
+        padding: 0.55rem 0.85rem;
+        transform: translateX(50%);
+        border: 1px solid rgba(152, 78, 255, 0.2);
+        border-radius: 100px;
+        background: rgba(255, 255, 255, 0.84);
+        box-shadow: 0 8px 30px rgba(120, 100, 180, 0.14);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      .scrub label { color: var(--muted); font-size: 0.66rem; white-space: nowrap; }
+      .scrub input { width: 100%; accent-color: var(--purple); }
+
+      .variant-switcher {
+        position: fixed;
+        z-index: 100;
+        right: 50%;
+        bottom: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.3rem;
+        transform: translateX(50%);
+        border: 1px solid rgba(152, 78, 255, 0.28);
+        border-radius: 100px;
+        background: rgba(26, 24, 48, 0.92);
+        box-shadow: 0 10px 36px rgba(26, 24, 48, 0.24);
+        color: #fff;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+      .variant-switcher button {
+        min-width: 2.4rem;
+        min-height: 2.25rem;
+        padding: 0.35rem 0.65rem;
+        border: 0;
+        border-radius: 100px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 0.68rem;
+        font-weight: 700;
+      }
+      .variant-switcher button:hover, .variant-switcher button.selected { background: linear-gradient(135deg, var(--pink), var(--purple)); color: #fff; }
+      .variant-switcher .switcher-arrow { color: #fff; font-size: 1rem; }
+      .variant-switcher .switcher-label { min-width: 10rem; padding: 0 0.25rem; text-align: center; font-size: 0.68rem; }
+
+      @media (max-width: 760px) {
+        .proto-nav-label { display: none; }
+        .proto-nav { min-height: 3.75rem; }
+        .hero-copy { top: min(calc(9svh + 3.75rem), calc(38svh - 8rem)); }
+        .metrics-panel { top: auto; right: 0.75rem; bottom: 8.2rem; max-height: 31svh; }
+        .scrub { bottom: 5.15rem; }
+        .variant-switcher .switcher-label { min-width: 7rem; }
+        .below-hero { padding-top: 7rem; }
+      }
+      @media (max-width: 420px) {
+        .hero-name { font-size: clamp(2rem, 10vw, 2.8rem); }
+        .metrics-panel { width: calc(100vw - 1.5rem); }
+        .metric-row { grid-template-columns: 7.2rem 1fr; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .copy-line { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="blob one" aria-hidden="true"></div>
+    <div class="blob two" aria-hidden="true"></div>
+    <div class="blob three" aria-hidden="true"></div>
+
+    <nav class="proto-nav" aria-label="Prototype navigation">
+      <a class="proto-mark" href="/">II</a>
+      <span class="proto-nav-label">PROTOTYPE · video hero architecture</span>
+      <a class="proto-nav-link" href="/">Exit prototype ↗</a>
+    </nav>
+
+    <div id="video-prototype-root">
+      <main class="hero-prototype" id="hero-prototype">
+        <div class="hero-copy" aria-live="polite">
+          <p class="hero-eyebrow">150 transparent frames · architecture study</p>
+          <h1 class="hero-name">Irina <span>Ivashchenko</span></h1>
+          <div class="copy-slot">
+            <p class="copy-line role" id="copy-role">UX/UI Designer</p>
+            <p class="copy-line" id="copy-experience">14+ years · 6+ products shipped from zero</p>
+          </div>
+          <p class="hero-subnote">same responsive stage, different renderer</p>
+        </div>
+
+        <div class="media-stage" id="media-stage" aria-label="Video hero prototype"></div>
+        <button class="play-toggle" id="play-toggle" type="button">Play animation</button>
+        <div class="stage-hint">drag the timeline · switch renderer below</div>
+      </main>
+
+      <section class="below-hero" aria-label="About surface preview">
+        <div class="below-hero-inner">
+          <p class="section-label">Surface continuity</p>
+          <h2>The About surface starts at the same 85svh boundary.</h2>
+          <p>This lower layer is intentionally present so transparent edges, compositing, and the handoff from the first screen can be judged on a narrow Safari viewport.</p>
+        </div>
+      </section>
+    </div>
+
+    <aside class="metrics-panel" aria-live="polite">
+      <div class="metrics-kicker"><span>PROTOTYPE</span><span id="metrics-status">booting</span></div>
+      <h2 class="metrics-title">Renderer diagnostics</h2>
+      <dl class="metric-list">
+        <div class="metric-row"><dt>Requested variant</dt><dd id="metric-requested">—</dd></div>
+        <div class="metric-row"><dt>Active renderer</dt><dd id="metric-active">—</dd></div>
+        <div class="metric-row"><dt>Injected controls</dt><dd id="metric-injected">—</dd></div>
+        <div class="metric-row"><dt>VP9 alpha canPlayType</dt><dd id="metric-vp9">—</dd></div>
+        <div class="metric-row"><dt>H.264 canPlayType</dt><dd id="metric-h264">—</dd></div>
+        <div class="metric-row"><dt>Alpha path</dt><dd id="metric-alpha">—</dd></div>
+        <div class="metric-row"><dt>Segment pause</dt><dd id="metric-segment">—</dd></div>
+        <div class="metric-row"><dt>Media / WebGL state</dt><dd id="metric-state">—</dd></div>
+        <div class="metric-row"><dt>Media error</dt><dd id="metric-error">—</dd></div>
+        <div class="metric-row"><dt>First visible</dt><dd id="metric-first-visible">—</dd></div>
+        <div class="metric-row"><dt>Ready</dt><dd id="metric-ready">—</dd></div>
+        <div class="metric-row"><dt>Last seek latency</dt><dd id="metric-seek">—</dd></div>
+        <div class="metric-row"><dt>Duration</dt><dd id="metric-duration">—</dd></div>
+        <div class="metric-row"><dt>Resolution</dt><dd id="metric-resolution">—</dd></div>
+        <div class="metric-row"><dt>Approx transferred</dt><dd id="metric-bytes">—</dd></div>
+        <div class="metric-row"><dt>Decoded frames (cache)</dt><dd id="metric-frames">—</dd></div>
+        <div class="metric-row"><dt>Decoded cache</dt><dd id="metric-cache">—</dd></div>
+        <div class="metric-row"><dt>Quality ladder</dt><dd id="metric-quality">—</dd></div>
+        <div class="metric-row"><dt>Scrub-held frame</dt><dd id="metric-scrub">—</dd></div>
+        <div class="metric-row"><dt>Last seek target</dt><dd id="metric-intended">—</dd></div>
+        <div class="metric-row"><dt>Media currentTime</dt><dd id="metric-media-time">—</dd></div>
+        <div class="metric-row"><dt>Media frame</dt><dd id="metric-media-frame">—</dd></div>
+        <div class="metric-row"><dt>Confirmed presented</dt><dd id="metric-presented">—</dd></div>
+        <div class="metric-row"><dt>Confirmation source</dt><dd id="metric-confirmation">—</dd></div>
+        <div class="metric-row"><dt>Seek target confirmed</dt><dd id="metric-target-confirmed">—</dd></div>
+        <div class="metric-row"><dt>Post-seek progress</dt><dd id="metric-post-seek-progress">—</dd></div>
+        <div class="metric-row"><dt>Target observation timeout</dt><dd id="metric-target-timeout">—</dd></div>
+        <div class="metric-row"><dt>Observed seek error</dt><dd id="metric-delta">—</dd></div>
+        <div class="metric-row"><dt>Expected motion</dt><dd id="metric-expected">—</dd></div>
+        <div class="metric-row"><dt>Actual playback</dt><dd id="metric-actual">—</dd></div>
+        <div class="metric-row"><dt>Playback reason</dt><dd id="metric-reason">—</dd></div>
+        <div class="metric-row"><dt>Resume requested</dt><dd id="metric-resume-requested">—</dd></div>
+        <div class="metric-row"><dt>Last progress age</dt><dd id="metric-progress-age">—</dd></div>
+        <div class="metric-row"><dt>HEVC capability</dt><dd id="metric-hevc">—</dd></div>
+        <div class="metric-row"><dt>HEVC evidence override</dt><dd id="metric-hevc-proof">—</dd></div>
+        <div class="metric-row"><dt>HEVC delivery</dt><dd id="metric-hevc-delivery">—</dd></div>
+        <div class="metric-row"><dt>HEVC preparation</dt><dd id="metric-hevc-prep">—</dd></div>
+        <div class="metric-row"><dt>HEVC gate</dt><dd id="metric-hevc-gate">—</dd></div>
+        <div class="metric-row"><dt>HEVC real-device gate</dt><dd id="metric-real-device-gate">—</dd></div>
+        <div class="metric-row"><dt>Fallback reason</dt><dd id="metric-fallback">—</dd></div>
+      </dl>
+      <p class="events-title">Recent events</p>
+      <ol class="events" id="metric-events"></ol>
+      <p class="events-title">Playback event tape</p>
+      <ol class="events" id="metric-tape"></ol>
+      <p class="metric-note">A scrub captures its latest input, pauses/seeks, and requests resume immediately on pointer release or change; target presentation and later progress are observational gauges, not play gates. Explicit Pause is the only user pause. Approx transferred bytes estimate unique successfully loaded frame IDs (they do not shrink when C evicts a decoded frame); the decoded-frame metric is current bounded cache occupancy. C keeps a bounded decoded neighborhood; late frame loads cannot paint over a newer target. Try <code>quality=hq</code>, <code>forceFail=a</code>, <code>forceFail=b</code>, <code>forceFail=h</code>, or <code>forceFail=webgl</code> to exercise fallback paths. A and H remain hidden until their decoded/runtime qualification passes; either falls directly to C on failure. B is a manually selected comparison draft and never an automatic fallback. H requires a same-origin <code>hevcSrc=/path.mov</code>, matching <code>hevcAssetId</code>, and an untrusted manual override such as <code>hevcQualified=asset:asset-id|device:macos-safari</code>; its canonical MOV preserves the unreduced 1280×720 source directly. A checked-in asset URL/hash/device manifest is still required before any production H use.</p>
+    </aside>
+
+    <div class="scrub">
+      <label for="timeline-scrub">Frame / seek</label>
+      <input id="timeline-scrub" type="range" min="0" max="149" value="0" step="1" aria-label="Scrub animation" />
+    </div>
+    <nav class="variant-switcher" id="variant-switcher" aria-label="Prototype variants"></nav>
+
+    <noscript>This prototype requires JavaScript to render the video variants.</noscript>
+    <script type="module" src="/src/browser/video-prototype.ts"></script>
+  </body>
+</html>

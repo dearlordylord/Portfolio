@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "id": "portfolio-staging-read",
+      "allowed": {
+        "origins": [
+          "https://prototype-video-hero.portfolio-motion-staging.pages.dev"
+        ],
+        "methods": [
+          "GET",
+          "HEAD"
+        ],
+        "headers": [
+          "Range"
+        ]
+      },
+      "exposeHeaders": [
+        "Accept-Ranges",
+        "Age",
+        "Cache-Control",
+        "CF-Cache-Status",
+        "Content-Length",
+        "Content-Range",
+        "ETag"
+      ],
+      "maxAgeSeconds": 86400
+    }
+  ]
+}

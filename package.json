@@ -1,0 +1,36 @@
+{
+  "name": "portfolio-motion-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "vite --host 127.0.0.1 --port 4173",
+    "prototype:serve": "vite --host 127.0.0.1 --port 4173",
+    "prototype:assets:hq": "bash scripts/generate-hq-packed-video.sh",
+    "prototype:encode:hevc-alpha": "bash scripts/encode-hevc-alpha.sh",
+    "prototype:validate:packed": "bash scripts/validate-packed-video.sh",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "bash scripts/run-playwright.sh",
+    "test:browser:prototype": "bash scripts/run-playwright.sh --config=playwright.prototype.config.ts",
+    "inspect:motion": "MOTION_INSPECTION=1 bash scripts/run-playwright.sh --project=chromium-mobile-390x844 --grep='capture deterministic visual convergence report'",
+    "inspect:motion:compare": "tsx scripts/compare-motion-inspection.ts",
+    "inspect:motion:device": "tsx scripts/merge-device-inspection.ts",
+    "test:browser:webkit": "PLAYWRIGHT_WEBKIT=1 bash scripts/run-playwright.sh --project=webkit-mobile-390x844",
+    "probe:media-origin": "tsx scripts/probe-media-origin.ts",
+    "verify:dist": "node scripts/verify-dist-assets.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run verify:dist"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "20.19.43",
+    "fast-check": "4.9.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

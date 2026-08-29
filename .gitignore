@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.playwright-deps/
+playwright-report/
+test-results/
+motion-artifacts/
+coverage/
+.nyc_output/
+.cache/
+.wrangler/
+*.log
+.DS_Store
+Thumbs.db
+public/video-prototype/hero-hevc-alpha.mov
